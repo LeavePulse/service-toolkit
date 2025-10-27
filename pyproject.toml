@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "service-toolkit"
+version = "0.1.0"
+description = "Shared infrastructure utilities for LeavePulse services"
+authors = ["THEROER <theroer09@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "service_toolkit", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+prometheus-client = "^0.20.0"
+litestar = "^2.17.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.2"
+ruff = "^0.13.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
