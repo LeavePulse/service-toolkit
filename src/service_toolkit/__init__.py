@@ -2,6 +2,7 @@
 
 from .health import HealthController
 from .logging import build_standard_logging_config
+from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
 from .prometheus import build_prometheus_instrumentation
 from .snowflake import (
     DEFAULT_EPOCH_MS,
@@ -15,7 +16,10 @@ __all__ = [
     "HealthController",
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
+    "DEFAULT_NATS_URL",
     "DEFAULT_EPOCH_MS",
+    "NATSClient",
+    "NATSSettings",
     "SnowflakeGenerator",
     "configure_default_generator",
     "generate_id",
