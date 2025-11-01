@@ -51,6 +51,8 @@ def build_prometheus_instrumentation(
         )
         metrics_registry = CollectorRegistry()
         if multiprocess_dir:
+            target_dir = Path(multiprocess_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
             multiprocess.MultiProcessCollector(metrics_registry)
 
     request_count = Counter(
