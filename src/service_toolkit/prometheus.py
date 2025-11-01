@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Tuple
 
 from litestar import Response, get
@@ -14,6 +16,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from prometheus_client import multiprocess
 
 ASGIApp = Callable[..., Any]
 
@@ -40,7 +43,15 @@ def build_prometheus_instrumentation(
     """
 
     normalized = _normalize_service_name(service_name)
-    metrics_registry = registry or CollectorRegistry()
+    if registry is not None:
+        metrics_registry = registry
+    else:
+        multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
+            "prometheus_multiproc_dir"
+        )
+        metrics_registry = CollectorRegistry()
+        if multiprocess_dir:
+            multiprocess.MultiProcessCollector(metrics_registry)
 
     request_count = Counter(
         f"{normalized}_http_requests_total",
@@ -111,4 +122,25 @@ def build_prometheus_instrumentation(
     return PrometheusMiddleware, metrics_endpoint
 
 
-__all__ = ["build_prometheus_instrumentation"]
+def prepare_multiprocess_directory(directory: str | os.PathLike[str] | None = None) -> Path | None:
+    """Create (and clean) the prometheus multiprocess directory.
+
+    Call this once in the parent process before spawning worker processes.
+    """
+
+    target = Path(
+        directory
+        or os.getenv("PROMETHEUS_MULTIPROC_DIR")
+        or os.getenv("prometheus_multiproc_dir", "")
+    )
+    if not target:
+        return None
+
+    target.mkdir(parents=True, exist_ok=True)
+    for item in target.iterdir():
+        if item.is_file():
+            item.unlink(missing_ok=True)
+    return target
+
+
+__all__ = ["build_prometheus_instrumentation", "prepare_multiprocess_directory"]
