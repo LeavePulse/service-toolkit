@@ -9,6 +9,9 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
 - (Extensible) space for other shared service utilities.
 
+> **Note**
+> Install the `nats` extra (`pip install service-toolkit[nats]`) to use the NATS helpers.
+
 ## Usage
 
 ```python
@@ -45,6 +48,12 @@ Install directly from the mono-repo path:
 
 ```bash
 poetry add "git+https://github.com/LeavePulse/service-toolkit"
+```
+
+Install with the NATS extra when the messaging helpers are needed:
+
+```bash
+poetry add "git+https://github.com/LeavePulse/service-toolkit[nats]"
 ```
 
 Run tests with:

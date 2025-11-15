@@ -8,11 +8,11 @@ readme = "README.md"
 dependencies = [
     "prometheus-client>=0.20.0,<0.21",
     "litestar>=2.17.0,<3",
-    "nats-py>=2.6.0,<3",
 ]
 
 [project.optional-dependencies]
 env = ["env-settings @ git+https://github.com/LeavePulse/env-settings"]
+nats = ["nats-py>=2.6.0,<3"]
 [dependency-groups]
 dev = [
     "pytest>=8.4.2,<9",

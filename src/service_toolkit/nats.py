@@ -9,13 +9,21 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from nats import connect
-from nats.aio.client import Client as _NATS
-from nats.aio.msg import Msg
-from nats.aio.subscription import Subscription
-from nats.js.api import ConsumerConfig, ConsumerInfo, StreamConfig, StreamInfo
-from nats.js.client import JetStreamContext
-from nats.js.errors import NotFoundError
+try:  # pragma: no cover - import guard
+    from nats import connect
+    from nats.aio.client import Client as _NATS
+    from nats.aio.msg import Msg
+    from nats.aio.subscription import Subscription
+    from nats.js.api import ConsumerConfig, ConsumerInfo, StreamConfig, StreamInfo
+    from nats.js.client import JetStreamContext
+    from nats.js.errors import NotFoundError
+except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
+    if exc.name == "nats":
+        raise ModuleNotFoundError(
+            "NATS helpers require the optional 'nats' extra. "
+            "Install with 'pip install service-toolkit[nats]'."
+        ) from exc
+    raise
 
 
 DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
