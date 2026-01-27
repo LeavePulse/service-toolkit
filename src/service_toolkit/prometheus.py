@@ -14,6 +14,7 @@ from prometheus_client import (
     CollectorRegistry,
     Counter,
     Histogram,
+    REGISTRY,
     generate_latest,
 )
 from prometheus_client import multiprocess
@@ -43,29 +44,36 @@ def build_prometheus_instrumentation(
     """
 
     normalized = _normalize_service_name(service_name)
+    multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
+        "prometheus_multiproc_dir"
+    )
+    multiprocess_enabled = False
+
     if registry is not None:
         metrics_registry = registry
     else:
-        multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
-            "prometheus_multiproc_dir"
-        )
         metrics_registry = CollectorRegistry()
         if multiprocess_dir:
+            multiprocess_enabled = True
             target_dir = Path(multiprocess_dir)
             target_dir.mkdir(parents=True, exist_ok=True)
             multiprocess.MultiProcessCollector(metrics_registry)
+
+    # In multiprocess mode, metrics must be registered in the default registry.
+    # The endpoint registry is dedicated to the multiprocess collector.
+    instrumentation_registry = REGISTRY if multiprocess_enabled else metrics_registry
 
     request_count = Counter(
         f"{normalized}_http_requests_total",
         "Total HTTP requests processed by the service",
         ["method", "route", "status"],
-        registry=metrics_registry,
+        registry=instrumentation_registry,
     )
     request_latency = Histogram(
         f"{normalized}_http_request_duration_seconds",
         "Latency of HTTP requests processed by the service",
         ["method", "route"],
-        registry=metrics_registry,
+        registry=instrumentation_registry,
     )
 
     def resolve_route_label(scope: dict[str, Any]) -> str:
