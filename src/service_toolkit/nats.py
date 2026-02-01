@@ -332,7 +332,15 @@ class NATSClient:
 
         js = await self.jetstream()
         try:
-            return await js.stream_info(name)
+            info = await js.stream_info(name)
+            if subjects:
+                current_subjects = set(info.config.subjects or [])
+                desired_subjects = set(subjects)
+                if not desired_subjects.issubset(current_subjects):
+                    info.config.subjects = sorted(current_subjects | desired_subjects)
+                    await js.update_stream(info.config)
+                    info = await js.stream_info(name)
+            return info
         except NotFoundError:
             if config is None:
                 config = StreamConfig(name=name, subjects=list(subjects))
