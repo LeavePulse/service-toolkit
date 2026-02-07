@@ -40,20 +40,20 @@ async def publish_user_created(event: dict[str, object]) -> None:
         await client.publish_json("auth.user.created", event)
 ```
 
-`NATSSettings.from_env()` automatically uses [`env-settings`](https://github.com/LeavePulse/env-settings)
+`NATSSettings.from_env()` automatically uses [`env-settings`](https://github.com/THEROER/env-settings)
 when available, yet remains compatible with plain environment variables or manual
 parameter construction.
 
 Install directly from the mono-repo path:
 
 ```bash
-poetry add "git+https://github.com/LeavePulse/service-toolkit"
+poetry add "git+https://github.com/THEROER/service-toolkit"
 ```
 
 Install with the NATS extra when the messaging helpers are needed:
 
 ```bash
-poetry add "git+https://github.com/LeavePulse/service-toolkit[nats]"
+poetry add "git+https://github.com/THEROER/service-toolkit[nats]"
 ```
 
 Run tests with:

@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-env = ["env-settings @ git+https://github.com/LeavePulse/env-settings"]
+env = ["env-settings @ git+https://github.com/THEROER/env-settings"]
 nats = ["nats-py>=2.6.0,<3"]
 [dependency-groups]
 dev = [
