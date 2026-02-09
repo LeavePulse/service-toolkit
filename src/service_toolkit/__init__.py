@@ -16,6 +16,7 @@ from .snowflake import (
     generate_id,
     reset_default_generator,
 )
+from .events import build_event, utc_now_iso
 
 if TYPE_CHECKING:  # pragma: no cover - import-time hinting
     from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
@@ -24,6 +25,7 @@ __all__ = [
     "HealthController",
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
+    "build_event",
     "DEFAULT_NATS_URL",
     "DEFAULT_EPOCH_MS",
     "NATSClient",
@@ -32,6 +34,7 @@ __all__ = [
     "configure_default_generator",
     "generate_id",
     "reset_default_generator",
+    "utc_now_iso",
 ]
 
 _OPTIONAL_EXPORTS = {"DEFAULT_NATS_URL", "NATSClient", "NATSSettings"}
