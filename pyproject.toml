@@ -15,6 +15,7 @@ env = ["env-settings @ git+https://github.com/THEROER/env-settings"]
 nats = ["nats-py>=2.6.0,<3"]
 [dependency-groups]
 dev = [
+    "nats-py>=2.6.0,<3",
     "pytest>=8.4.2,<9",
     "pytest-asyncio>=0.24.0,<0.25",
     "ruff>=0.13.1,<0.14",
