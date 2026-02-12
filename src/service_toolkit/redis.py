@@ -272,6 +272,14 @@ else
 end
 """.strip()
 
+_LOCK_EXTEND_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("pexpire", KEYS[1], ARGV[2])
+else
+  return 0
+end
+""".strip()
+
 
 class RedisLock:
     """Simple distributed lock using SET NX PX and a compare-and-delete release."""
@@ -310,6 +318,25 @@ class RedisLock:
         self._held = False
         return int(result or 0) == 1
 
+    async def extend(self, *, ttl_seconds: float | None = None) -> bool:
+        """Extend the lock TTL if still held by this instance."""
+
+        if not self._held:
+            return False
+        ttl = self._ttl_seconds if ttl_seconds is None else float(ttl_seconds)
+        ttl_ms = max(1, int(ttl * 1000))
+        result = await self._client.eval(
+            _LOCK_EXTEND_SCRIPT,
+            1,
+            self._key,
+            self._token,
+            str(ttl_ms),
+        )
+        ok = int(result or 0) == 1
+        if not ok:
+            self._held = False
+        return ok
+
     async def acquire_with_wait(
         self,
         *,
@@ -334,6 +361,99 @@ class RedisLock:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.release()
+
+
+class LeaderLease:
+    """Maintain a renewable leader lease for background tasks.
+
+    This is a pragmatic alternative to running background consumers in a
+    dedicated sidecar process: any worker can attempt to become leader, but only
+    the leader should execute the protected task(s).
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        key: str,
+        *,
+        ttl_seconds: float = 30.0,
+        renew_interval_seconds: float | None = None,
+        on_lost: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        self._client = client
+        self._lock = RedisLock(client, key, ttl_seconds=ttl_seconds)
+        self._ttl_seconds = float(ttl_seconds)
+        self._renew_interval = (
+            float(renew_interval_seconds)
+            if renew_interval_seconds is not None
+            else max(1.0, self._ttl_seconds / 3.0)
+        )
+        self._on_lost = on_lost
+        self._task: asyncio.Task[None] | None = None
+        self._lost = asyncio.Event()
+
+    @property
+    def key(self) -> str:
+        return self._lock.key
+
+    @property
+    def held(self) -> bool:
+        return self._lock.held and not self._lost.is_set()
+
+    async def acquire(self) -> bool:
+        if self._task is not None and not self._task.done():
+            return self.held
+
+        ok = await self._lock.acquire()
+        if not ok:
+            return False
+
+        self._lost.clear()
+        self._task = asyncio.create_task(self._renew_loop())
+        return True
+
+    async def release(self) -> None:
+        task = self._task
+        self._task = None
+        self._lost.set()
+
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:  # pragma: no cover - expected
+                pass
+
+        await self._lock.release()
+
+    async def wait_lost(self) -> None:
+        task = self._task
+        if task is None:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:  # pragma: no cover - normal shutdown
+            return
+
+    async def _renew_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._renew_interval)
+                ok = await self._lock.extend(ttl_seconds=self._ttl_seconds)
+                if ok:
+                    continue
+                self._lost.set()
+                if self._on_lost is not None:
+                    asyncio.create_task(self._safe_on_lost())
+                return
+        except asyncio.CancelledError:  # pragma: no cover
+            return
+
+    async def _safe_on_lost(self) -> None:
+        try:
+            await self._on_lost()  # type: ignore[misc]
+        except Exception:  # noqa: BLE001  # pragma: no cover
+            return
 
 
 class RedisCache(Generic[T]):
@@ -451,10 +571,10 @@ __all__ = [
     "DEFAULT_REDIS_HOST",
     "DEFAULT_REDIS_PORT",
     "Keyspace",
+    "LeaderLease",
     "RedisCache",
     "RedisClient",
     "RedisLock",
     "RedisSettings",
     "ttl_with_jitter",
 ]
-

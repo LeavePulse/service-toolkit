@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from service_toolkit.redis import Keyspace, RedisCache, RedisLock, ttl_with_jitter
+from service_toolkit.redis import Keyspace, LeaderLease, RedisCache, RedisLock, ttl_with_jitter
 
 
 class FakeRedis:
@@ -37,12 +37,19 @@ class FakeRedis:
             return 1
         return 0
 
-    async def eval(self, script: str, num_keys: int, key: str, token: str) -> int:
-        _ = (script, num_keys)
+    async def eval(self, script: str, num_keys: int, key: str, token: str, *args: str) -> int:
+        _ = (num_keys, args)
         current = self._store.get(key)
-        if current == token.encode("utf-8"):
+        if current != token.encode("utf-8"):
+            return 0
+
+        if "pexpire" in script:
+            return 1
+
+        if "del" in script:
             del self._store[key]
             return 1
+
         return 0
 
 
@@ -72,6 +79,19 @@ async def test_redis_lock_acquire_release() -> None:
     assert await lock2.acquire() is False
     assert await lock1.release() is True
     assert await lock2.acquire() is True
+
+
+@pytest.mark.asyncio
+async def test_redis_lock_extend() -> None:
+    client = FakeRedis()
+    lock = RedisLock(client, "locks:extend", ttl_seconds=1.0)
+    assert await lock.acquire() is True
+    assert await lock.extend() is True
+
+    # If the key disappears, the lock should be considered lost.
+    client._store.pop(lock.key, None)
+    assert await lock.extend() is False
+    assert lock.held is False
 
 
 @pytest.mark.asyncio
@@ -114,3 +134,25 @@ async def test_lock_wait_acquires_after_release() -> None:
     finally:
         task.cancel()
 
+
+@pytest.mark.asyncio
+async def test_leader_lease_calls_on_lost() -> None:
+    client = FakeRedis()
+    calls: list[str] = []
+
+    async def on_lost() -> None:
+        calls.append("lost")
+
+    lease = LeaderLease(
+        client,
+        "locks:lease",
+        ttl_seconds=0.1,
+        renew_interval_seconds=0.05,
+        on_lost=on_lost,
+    )
+    assert await lease.acquire() is True
+    # Simulate lock key being deleted externally.
+    client._store.pop(lease.key, None)
+
+    await asyncio.sleep(0.15)
+    assert calls == ["lost"]
