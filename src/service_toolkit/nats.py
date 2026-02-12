@@ -314,12 +314,13 @@ class NATSClient:
         """Subscribe to a subject with a callback."""
 
         connection = await self.connect()
-        return await connection.subscribe(
-            subject,
-            queue=queue,
-            cb=callback,
-            max_msgs=max_messages,
-        )
+        kwargs: dict[str, Any] = {
+            "queue": queue,
+            "cb": callback,
+        }
+        if max_messages is not None:
+            kwargs["max_msgs"] = max_messages
+        return await connection.subscribe(subject, **kwargs)
 
     async def ensure_stream(
         self,

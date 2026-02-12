@@ -20,6 +20,17 @@ from .events import build_event, utc_now_iso
 
 if TYPE_CHECKING:  # pragma: no cover - import-time hinting
     from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
+    from .redis import (
+        DEFAULT_REDIS_DB,
+        DEFAULT_REDIS_HOST,
+        DEFAULT_REDIS_PORT,
+        Keyspace,
+        RedisCache,
+        RedisClient,
+        RedisLock,
+        RedisSettings,
+        ttl_with_jitter,
+    )
 
 __all__ = [
     "HealthController",
@@ -28,16 +39,53 @@ __all__ = [
     "build_event",
     "DEFAULT_NATS_URL",
     "DEFAULT_EPOCH_MS",
+    "DEFAULT_REDIS_DB",
+    "DEFAULT_REDIS_HOST",
+    "DEFAULT_REDIS_PORT",
+    "Keyspace",
     "NATSClient",
     "NATSSettings",
+    "RedisCache",
+    "RedisClient",
+    "RedisLock",
+    "RedisSettings",
     "SnowflakeGenerator",
     "configure_default_generator",
     "generate_id",
     "reset_default_generator",
+    "ttl_with_jitter",
     "utc_now_iso",
 ]
 
-_OPTIONAL_EXPORTS = {"DEFAULT_NATS_URL", "NATSClient", "NATSSettings"}
+_OPTIONAL_EXPORTS = {
+    "DEFAULT_NATS_URL",
+    "NATSClient",
+    "NATSSettings",
+    "DEFAULT_REDIS_DB",
+    "DEFAULT_REDIS_HOST",
+    "DEFAULT_REDIS_PORT",
+    "Keyspace",
+    "RedisCache",
+    "RedisClient",
+    "RedisLock",
+    "RedisSettings",
+    "ttl_with_jitter",
+}
+
+_OPTIONAL_EXPORT_MODULES = {
+    "DEFAULT_NATS_URL": ".nats",
+    "NATSClient": ".nats",
+    "NATSSettings": ".nats",
+    "DEFAULT_REDIS_DB": ".redis",
+    "DEFAULT_REDIS_HOST": ".redis",
+    "DEFAULT_REDIS_PORT": ".redis",
+    "Keyspace": ".redis",
+    "RedisCache": ".redis",
+    "RedisClient": ".redis",
+    "RedisLock": ".redis",
+    "RedisSettings": ".redis",
+    "ttl_with_jitter": ".redis",
+}
 
 
 def __getattr__(name: str):
@@ -45,12 +93,18 @@ def __getattr__(name: str):
         raise AttributeError(name)
 
     try:
-        module = importlib.import_module(".nats", __name__)
+        module_name = _OPTIONAL_EXPORT_MODULES.get(name, ".nats")
+        module = importlib.import_module(module_name, __name__)
     except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
         if exc.name == "nats":
             raise ModuleNotFoundError(
                 "NATS helpers require the optional 'nats' extra. "
                 "Install with 'pip install service-toolkit[nats]'."
+            ) from exc
+        if exc.name == "redis":
+            raise ModuleNotFoundError(
+                "Redis helpers require the optional 'redis' extra. "
+                "Install with 'pip install service-toolkit[redis]'."
             ) from exc
         raise
 

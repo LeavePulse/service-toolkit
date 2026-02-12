@@ -10,12 +10,13 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - (Extensible) space for other shared service utilities.
 
 > **Note**
-> Install the `nats` extra (`pip install service-toolkit[nats]`) to use the NATS helpers.
+> Install extras as needed:
+> - `pip install service-toolkit[nats]` for NATS helpers
+> - `pip install service-toolkit[redis]` for Redis helpers
 
 ## Usage
 
 ```python
-
 from service_toolkit.prometheus import build_prometheus_instrumentation
 
 PrometheusMiddleware, metrics_endpoint = build_prometheus_instrumentation(
@@ -27,7 +28,7 @@ app = Litestar(
     route_handlers=[metrics_endpoint, ...],
     middleware=[DefineMiddleware(PrometheusMiddleware), ...],
 )
-
+```
 
 ```python
 from service_toolkit.nats import NATSClient, NATSSettings
@@ -44,21 +45,45 @@ async def publish_user_created(event: dict[str, object]) -> None:
 when available, yet remains compatible with plain environment variables or manual
 parameter construction.
 
+```python
+from service_toolkit.redis import Keyspace, RedisCache, RedisClient, RedisSettings
+
+settings = RedisSettings.from_env(prefix="REDIS_")
+
+
+async def get_server_summary(server_id: int) -> dict[str, object]:
+    return {"server_id": server_id}
+
+
+async def load(server_id: int) -> dict[str, object]:
+    async with RedisClient(settings) as redis:
+        cache = RedisCache(
+            redis.client,
+            keyspace=Keyspace("cache"),
+            ttl_jitter_ratio=0.1,
+        )
+        return await cache.get_or_set_json(
+            f"server:{server_id}",
+            lambda: get_server_summary(server_id),
+            ttl_seconds=60,
+        )
+```
+
 Install directly from the mono-repo path:
 
 ```bash
 poetry add "git+https://github.com/THEROER/service-toolkit"
 ```
 
-Install with the NATS extra when the messaging helpers are needed:
+Install with extras when needed:
 
 ```bash
 poetry add "git+https://github.com/THEROER/service-toolkit[nats]"
+poetry add "git+https://github.com/THEROER/service-toolkit[redis]"
 ```
 
 Run tests with:
 
 ```bash
-poetry install
-poetry run pytest
+uv run pytest
 ```

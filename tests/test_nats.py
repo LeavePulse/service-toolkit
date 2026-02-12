@@ -103,7 +103,7 @@ async def test_client_publish_and_request(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NATS_SERVERS", "nats://localhost:4223 nats://demo:4224")
-    monkeypatch.setenv("NATS_NAME", "core-service")
+    monkeypatch.setenv("NATS_NAME", "server-service")
     monkeypatch.setenv("NATS_MAX_RECONNECT_ATTEMPTS", "10")
     monkeypatch.setenv("NATS_RECONNECT_TIME_WAIT", "1.5")
     monkeypatch.setenv("NATS_PING_INTERVAL", "30")
@@ -111,7 +111,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = NATSSettings.from_env()
 
     assert settings.servers == ("nats://localhost:4223", "nats://demo:4224")
-    assert settings.name == "core-service"
+    assert settings.name == "server-service"
     assert settings.max_reconnect_attempts == 10
     assert settings.reconnect_time_wait == pytest.approx(1.5)
     assert settings.ping_interval == pytest.approx(30.0)
