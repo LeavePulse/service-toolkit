@@ -3,7 +3,7 @@ name = "service-toolkit"
 version = "0.1.0"
 description = "Shared infrastructure utilities for LeavePulse services"
 authors = [{ name = "THEROER", email = "theroer09@gmail.com" }]
-requires-python = "~=3.11"
+requires-python = "~=3.14.0"
 readme = "README.md"
 dependencies = [
     "prometheus-client>=0.20.0,<0.21",

@@ -19,7 +19,7 @@ from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
 from .snowflake import generate_id
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Sequence
+    pass
 
 logger = logging.getLogger(__name__)
 

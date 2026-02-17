@@ -34,12 +34,16 @@ def build_standard_exception_handlers(
     """Build Litestar exception handlers using a consistent RFC7807 format."""
 
     if problem_type_resolver is None:
-        problem_type_resolver = (
-            lambda error: f"urn:{service_name}:error:{error.code.value.lower()}"
-        )
+        def default_problem_type_resolver(error: Any) -> str:
+            return f"urn:{service_name}:error:{error.code.value.lower()}"
+
+        problem_type_resolver = default_problem_type_resolver
 
     if problem_extension_builder is None:
-        problem_extension_builder = lambda _error: {"service": service_name}
+        def default_problem_extension_builder(_error: Any) -> Mapping[str, Any]:
+            return {"service": service_name}
+
+        problem_extension_builder = default_problem_extension_builder
 
     return create_litestar_exception_handlers(
         translator=translator,
@@ -63,4 +67,3 @@ __all__ = [
     "apply_problem_details",
     "build_standard_exception_handlers",
 ]
-
