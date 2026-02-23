@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-PLATFORM_PERMS_VERSION = 1
+PLATFORM_PERMS_VERSION = 2
 PROJECT_PERMS_VERSION = 1
 
 # Platform-scoped permissions (auth-service).
@@ -18,10 +18,23 @@ PLATFORM_PERM_BITS: dict[str, int] = {
     "platform.audit.view": 0,
     "platform.staff.manage": 1,
     "platform.users.moderate": 2,
-    "platform.projects.moderate": 3,
     "platform.content.moderate": 4,
-    "platform.verification.override": 5,
     "platform.system.manage": 6,
+    "platform.servers.moderate": 7,
+    "platform.servers.profile.edit": 8,
+    "platform.servers.media.edit": 9,
+    "platform.servers.links.edit": 10,
+    "platform.servers.team.manage": 11,
+    "platform.servers.verification.manage": 12,
+    "platform.servers.whitelist.config.edit": 13,
+    "platform.servers.whitelist.review": 14,
+    "platform.servers.whitelist.import": 15,
+    "platform.servers.monitoring.view_private": 16,
+    "platform.servers.monitoring.alerts.manage": 17,
+    "platform.servers.community.moderate": 18,
+    "platform.servers.community.official_reply": 19,
+    "platform.servers.bot.manage": 20,
+    "platform.servers.bot.debug": 21,
 }
 
 # Project/root-scoped permissions (server-service).
@@ -97,4 +110,3 @@ def platform_perms_bits_from_scope(scope: Iterable[str]) -> int:
 def project_perms_bits_from_codes(codes: Iterable[str]) -> int:
     """Encode project/root permission bits from a list of permission codes."""
     return bits_from_codes(codes, PROJECT_PERM_BITS)
-
