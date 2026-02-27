@@ -328,8 +328,25 @@ class NATSClient:
         subjects: Sequence[str],
         *,
         config: StreamConfig | None = None,
+        default_max_age: int | None = 86400_000_000_000,  # 24 hours in nanoseconds
+        default_max_bytes: int | None = 2_147_483_648,  # 2 GiB
     ) -> StreamInfo:
-        """Ensure that a JetStream stream exists."""
+        """Ensure that a JetStream stream exists.
+
+        Args:
+            name: Stream name
+            subjects: List of subjects to bind to the stream
+            config: Optional StreamConfig for custom settings
+            default_max_age: Default max_age in nanoseconds (24h by default, None for unlimited)
+            default_max_bytes: Default max_bytes (2 GiB by default, None for unlimited)
+
+        Returns:
+            StreamInfo for the created or existing stream
+
+        Note:
+            If config is provided, default_max_age and default_max_bytes are ignored.
+            To create unlimited retention, pass config with max_age=0 and max_bytes=-1.
+        """
 
         js = await self.jetstream()
         try:
@@ -344,7 +361,12 @@ class NATSClient:
             return info
         except NotFoundError:
             if config is None:
-                config = StreamConfig(name=name, subjects=list(subjects))
+                config = StreamConfig(
+                    name=name,
+                    subjects=list(subjects),
+                    max_age=default_max_age,
+                    max_bytes=default_max_bytes,
+                )
             else:
                 if not getattr(config, "name", None):
                     config.name = name

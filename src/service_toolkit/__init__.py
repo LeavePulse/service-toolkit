@@ -19,6 +19,7 @@ from .snowflake import (
 from .events import build_event, utc_now_iso
 
 if TYPE_CHECKING:  # pragma: no cover - import-time hinting
+    from .leader_elected_listener import LeaderElectedListener
     from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
     from .redis import (
         DEFAULT_REDIS_DB,
@@ -44,6 +45,7 @@ __all__ = [
     "DEFAULT_REDIS_HOST",
     "DEFAULT_REDIS_PORT",
     "Keyspace",
+    "LeaderElectedListener",
     "LeaderLease",
     "NATSClient",
     "NATSSettings",
@@ -67,6 +69,7 @@ _OPTIONAL_EXPORTS = {
     "DEFAULT_REDIS_HOST",
     "DEFAULT_REDIS_PORT",
     "Keyspace",
+    "LeaderElectedListener",
     "LeaderLease",
     "RedisCache",
     "RedisClient",
@@ -83,6 +86,7 @@ _OPTIONAL_EXPORT_MODULES = {
     "DEFAULT_REDIS_HOST": ".redis",
     "DEFAULT_REDIS_PORT": ".redis",
     "Keyspace": ".redis",
+    "LeaderElectedListener": ".leader_elected_listener",
     "LeaderLease": ".redis",
     "RedisCache": ".redis",
     "RedisClient": ".redis",
