@@ -55,6 +55,48 @@ def build_standard_exception_handlers(
     )
 
 
+def build_error_translator_with_defaults(
+    *,
+    service_name: str,
+    custom_translations: Mapping[str, Mapping[str, str]] | None = None,
+    default_locale: str = "en",
+) -> ErrorTranslator:
+    """Create ``ErrorTranslator`` with common defaults and service-level overrides.
+
+    This keeps service ``main.py`` files concise and avoids repeated setup code.
+    """
+
+    translator = ErrorTranslator(default_locale=default_locale)
+
+    translator.add_translations(
+        "en",
+        {
+            "OAUTH_PROVIDER_UNKNOWN": "Unknown OAuth provider",
+            "SESSION_EXPIRED": "Session is no longer valid",
+            "RESOURCE_NOT_FOUND": "Resource not found",
+            "INTERNAL_ERROR": f"{service_name} internal error",
+        },
+        persist=False,
+    )
+    translator.add_translations(
+        "uk",
+        {
+            "OAUTH_PROVIDER_UNKNOWN": "Невідомий OAuth-провайдер",
+            "SESSION_EXPIRED": "Сесія більше не дійсна",
+            "RESOURCE_NOT_FOUND": "Ресурс не знайдено",
+        },
+        persist=False,
+    )
+
+    if custom_translations:
+        for locale, locale_translations in custom_translations.items():
+            if not locale_translations:
+                continue
+            translator.add_translations(locale, dict(locale_translations), persist=False)
+
+    return translator
+
+
 def apply_problem_details(app: Any, *, service_name: str) -> None:
     """Apply awesome-errors OpenAPI problem details integration to a Litestar app."""
 
@@ -65,5 +107,6 @@ __all__ = [
     "ErrorResponseFormat",
     "ErrorTranslator",
     "apply_problem_details",
+    "build_error_translator_with_defaults",
     "build_standard_exception_handlers",
 ]

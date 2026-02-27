@@ -6,13 +6,12 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from service_toolkit.nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
 from service_toolkit.redis import Keyspace, LeaderLease, RedisClient, RedisSettings
 
 if TYPE_CHECKING:
-    from nats.aio.msg import Msg
     from nats.aio.subscription import Subscription
 
 logger = logging.getLogger(__name__)

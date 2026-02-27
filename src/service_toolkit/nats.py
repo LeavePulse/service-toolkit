@@ -31,6 +31,10 @@ DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 MessageCallback = Callable[[Msg], Awaitable[None]]
 
 
+class ConsumerCompatibilityError(RuntimeError):
+    """Raised when an existing JetStream consumer is incompatible with expectations."""
+
+
 def _parse_servers(value: str | None) -> tuple[str, ...]:
     if not value:
         return (DEFAULT_NATS_URL,)
@@ -393,6 +397,51 @@ class NATSClient:
                 config.durable_name = durable_name
             return await js.add_consumer(stream, config)
 
+    async def assert_consumer_compatible(
+        self,
+        stream: str,
+        durable_name: str,
+        *,
+        subject: str | None = None,
+        queue_group: str | None = None,
+    ) -> ConsumerInfo | None:
+        """Validate compatibility of an existing durable consumer.
+
+        Returns:
+            ConsumerInfo when consumer exists, otherwise None.
+
+        Raises:
+            ConsumerCompatibilityError: if existing consumer config is incompatible.
+        """
+
+        js = await self.jetstream()
+        try:
+            info = await js.consumer_info(stream, durable_name)
+        except NotFoundError:
+            return None
+
+        mismatches: list[str] = []
+        existing_subject = (getattr(info.config, "filter_subject", None) or "").strip()
+        expected_subject = (subject or "").strip()
+        if expected_subject and existing_subject and existing_subject != expected_subject:
+            mismatches.append(
+                f"filter_subject existing={existing_subject!r} expected={expected_subject!r}"
+            )
+
+        existing_group = (getattr(info.config, "deliver_group", None) or "").strip()
+        expected_group = (queue_group or "").strip()
+        if existing_group != expected_group:
+            mismatches.append(
+                f"deliver_group existing={existing_group!r} expected={expected_group!r}"
+            )
+
+        if mismatches:
+            details = "; ".join(mismatches)
+            raise ConsumerCompatibilityError(
+                f"Consumer {stream}/{durable_name} is incompatible: {details}"
+            )
+        return info
+
     async def close(self) -> None:
         """Drain and close the underlying connection."""
 
@@ -415,4 +464,9 @@ class NATSClient:
         await self.close()
 
 
-__all__ = ["NATSClient", "NATSSettings", "DEFAULT_NATS_URL"]
+__all__ = [
+    "ConsumerCompatibilityError",
+    "NATSClient",
+    "NATSSettings",
+    "DEFAULT_NATS_URL",
+]
