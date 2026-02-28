@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from litestar.logging import LoggingConfig
+from litestar.types import ASGIApp
 
 DEFAULT_SUPPRESSED_PATTERNS: tuple[str, ...] = (
     "GET /health",
@@ -24,7 +25,6 @@ _MAX_CONTEXT_VALUE_LEN = 128
 Scope = dict[str, object]
 Receive = Callable[[], Awaitable[dict[str, object]]]
 Send = Callable[[dict[str, object]], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 def _context_label(
@@ -149,6 +149,11 @@ class RequestContextLoggingMiddleware:
             _reset_log_context(tokens)
 
 
+def request_context_middleware(app: ASGIApp) -> ASGIApp:
+    """Return request context middleware as an ASGI app factory."""
+    return RequestContextLoggingMiddleware(app)
+
+
 def _merge_patterns(
     suppressed_paths: Sequence[str] | None,
     include_default: bool,
@@ -228,6 +233,7 @@ def build_standard_logging_config(
 
 __all__ = [
     "RequestContextLoggingMiddleware",
+    "request_context_middleware",
     "bind_log_user_id",
     "build_standard_logging_config",
     "get_log_context",

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from litestar import Response, get
-from litestar.types import ControllerRouterHandler
+from litestar.types import ASGIApp, ControllerRouterHandler
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -22,7 +22,6 @@ from prometheus_client import multiprocess
 Scope = dict[str, object]
 Receive = Callable[[], Awaitable[dict[str, object]]]
 Send = Callable[[dict[str, object]], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 MiddlewareFactory = Callable[..., ASGIApp]
 
 
@@ -88,7 +87,7 @@ def build_prometheus_instrumentation(
                 return str(pattern)
         return str(scope.get("path", "unknown"))
 
-    class PrometheusMiddleware:
+    class _PrometheusMiddleware:
         """ASGI middleware that records Prometheus metrics for HTTP traffic."""
 
         def __init__(self, app: ASGIApp) -> None:
@@ -123,6 +122,9 @@ def build_prometheus_instrumentation(
                 ).inc()
                 request_latency.labels(method=method, route=path).observe(elapsed)
 
+    def _prometheus_middleware(app: ASGIApp) -> ASGIApp:
+        return _PrometheusMiddleware(app)
+
     def metrics_handler() -> Response[bytes]:
         payload = generate_latest(metrics_registry)
         return Response(payload, media_type=CONTENT_TYPE_LATEST)
@@ -131,7 +133,7 @@ def build_prometheus_instrumentation(
         metrics_handler
     )
 
-    return PrometheusMiddleware, metrics_endpoint
+    return _prometheus_middleware, metrics_endpoint
 
 
 def prepare_multiprocess_directory(directory: str | os.PathLike[str] | None = None) -> Path | None:

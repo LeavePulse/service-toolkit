@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Any, cast
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from litestar.types import Middleware
+    from collections.abc import Callable
+
+    from litestar.types import ASGIApp
+
+    MiddlewareFactory = Callable[..., ASGIApp]
 
 _configure_lock = threading.Lock()
 _configured = False
@@ -71,7 +75,7 @@ def setup_tracing(
     instrument_httpx: bool | None = None,
     instrument_sqlalchemy: bool | None = None,
     instrument_redis: bool | None = None,
-) -> Middleware | None:
+) -> MiddlewareFactory | None:
     """Configure global OpenTelemetry provider and return ASGI middleware class.
 
     Environment:
@@ -185,7 +189,10 @@ def setup_tracing(
             RedisInstrumentor().instrument()
             _redis_instrumented = True
 
-    return cast("Middleware", OpenTelemetryMiddleware)
+    def _otel_middleware(app: ASGIApp) -> ASGIApp:
+        return cast("ASGIApp", OpenTelemetryMiddleware(app))
+
+    return _otel_middleware
 
 
 __all__ = ["setup_tracing"]
