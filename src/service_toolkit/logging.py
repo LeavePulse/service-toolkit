@@ -55,6 +55,21 @@ def _extract_trace_id(scope: dict[str, Any]) -> str | None:
     return _extract_header(scope, "x-trace-id")
 
 
+def _current_otel_trace_id() -> str | None:
+    try:
+        from opentelemetry import trace
+    except ModuleNotFoundError:
+        return None
+
+    span = trace.get_current_span()
+    if span is None:
+        return None
+    span_context = span.get_span_context()
+    if span_context is None or not span_context.is_valid:
+        return None
+    return f"{int(span_context.trace_id):032x}"
+
+
 def bind_log_user_id(user_id: object | None) -> None:
     """Bind authenticated user identifier into request-local logging context."""
     _USER_ID_VAR.set(_context_label(user_id))
@@ -62,9 +77,12 @@ def bind_log_user_id(user_id: object | None) -> None:
 
 def get_log_context() -> dict[str, str]:
     """Return currently active logging context values."""
+    trace_id = _TRACE_ID_VAR.get()
+    if trace_id == "-":
+        trace_id = _current_otel_trace_id() or trace_id
     return {
         "request_id": _REQUEST_ID_VAR.get(),
-        "trace_id": _TRACE_ID_VAR.get(),
+        "trace_id": trace_id,
         "user_id": _USER_ID_VAR.get(),
     }
 

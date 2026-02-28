@@ -6,6 +6,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - Standard logging configuration builder (`build_standard_logging_config`) with health/metrics suppression support (defaults can be overridden).
 - Request-scoped logging context middleware (`RequestContextLoggingMiddleware`) with `request_id`, `trace_id`, and `user_id` fields.
 - SQLAlchemy slow-query logger installer (`install_slow_query_logging`) for unified DB observability.
+- OpenTelemetry tracing bootstrap (`setup_tracing`) for distributed traces (OTLP export + auto-instrumentation for ASGI/httpx/sqlalchemy/redis).
 - Simple health-check controller for Litestar applications (`HealthController`).
 - Snowflake ID generation helpers (configurable epoch/node setup).
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
@@ -15,6 +16,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 > Install extras as needed:
 > - `pip install service-toolkit[nats]` for NATS helpers
 > - `pip install service-toolkit[redis]` for Redis helpers
+> - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
 
 ## Usage
 
@@ -49,6 +51,26 @@ install_slow_query_logging(
     threshold_seconds=0.25,
 )
 ```
+
+```python
+from litestar.middleware.base import DefineMiddleware
+from service_toolkit.tracing import setup_tracing
+
+OpenTelemetryMiddleware = setup_tracing(service_name="server-service")
+
+middleware = []
+if OpenTelemetryMiddleware is not None:
+    middleware.append(DefineMiddleware(OpenTelemetryMiddleware))
+```
+
+`setup_tracing()` reads environment configuration:
+- `OTEL_ENABLED` (bool, default `false`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://tempo:4317`)
+- `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`)
+- `OTEL_EXPORTER_OTLP_INSECURE` (bool)
+- `OTEL_TRACES_SAMPLER_ARG` (`0.0..1.0`, default `1.0`)
+- `OTEL_RESOURCE_ATTRIBUTES` (`k=v,k2=v2`)
+- `OTEL_INSTRUMENT_HTTPX`, `OTEL_INSTRUMENT_SQLALCHEMY`, `OTEL_INSTRUMENT_REDIS` (bool, default `true`)
 
 ```python
 from service_toolkit.nats import NATSClient, NATSSettings

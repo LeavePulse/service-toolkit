@@ -37,6 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover - import-time hinting
         RedisSettings,
         ttl_with_jitter,
     )
+    from .tracing import setup_tracing
 
 __all__ = [
     "HealthController",
@@ -63,6 +64,7 @@ __all__ = [
     "configure_default_generator",
     "generate_id",
     "reset_default_generator",
+    "setup_tracing",
     "ttl_with_jitter",
     "utc_now_iso",
 ]
@@ -81,6 +83,7 @@ _OPTIONAL_EXPORTS = {
     "RedisClient",
     "RedisLock",
     "RedisSettings",
+    "setup_tracing",
     "ttl_with_jitter",
 }
 
@@ -98,6 +101,7 @@ _OPTIONAL_EXPORT_MODULES = {
     "RedisClient": ".redis",
     "RedisLock": ".redis",
     "RedisSettings": ".redis",
+    "setup_tracing": ".tracing",
     "ttl_with_jitter": ".redis",
 }
 
@@ -119,6 +123,11 @@ def __getattr__(name: str):
             raise ModuleNotFoundError(
                 "Redis helpers require the optional 'redis' extra. "
                 "Install with 'pip install service-toolkit[redis]'."
+            ) from exc
+        if exc.name and exc.name.startswith("opentelemetry"):
+            raise ModuleNotFoundError(
+                "Tracing helpers require the optional 'tracing' extra. "
+                "Install with 'pip install service-toolkit[tracing]'."
             ) from exc
         raise
 
