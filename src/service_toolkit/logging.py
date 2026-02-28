@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar, Token
 from logging import Filter, LogRecord
 from typing import Any
@@ -21,6 +21,10 @@ _TRACE_ID_VAR: ContextVar[str] = ContextVar("leavepulse_trace_id", default="-")
 _USER_ID_VAR: ContextVar[str] = ContextVar("leavepulse_user_id", default="-")
 
 _MAX_CONTEXT_VALUE_LEN = 128
+Scope = dict[str, object]
+Receive = Callable[[], Awaitable[dict[str, object]]]
+Send = Callable[[dict[str, object]], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 def _context_label(
@@ -35,7 +39,7 @@ def _context_label(
     return text[:max_len]
 
 
-def _extract_header(scope: dict[str, Any], name: str) -> str | None:
+def _extract_header(scope: Scope, name: str) -> str | None:
     target = name.lower().encode()
     for raw_name, raw_value in scope.get("headers", []):
         if raw_name.lower() != target:
@@ -44,7 +48,7 @@ def _extract_header(scope: dict[str, Any], name: str) -> str | None:
     return None
 
 
-def _extract_trace_id(scope: dict[str, Any]) -> str | None:
+def _extract_trace_id(scope: Scope) -> str | None:
     traceparent = _extract_header(scope, "traceparent")
     if traceparent:
         parts = traceparent.split("-")
@@ -109,14 +113,14 @@ def _reset_log_context(tokens: tuple[Token[str], Token[str], Token[str]]) -> Non
 class RequestContextLoggingMiddleware:
     """ASGI middleware that sets request-scoped logging context values."""
 
-    def __init__(self, app: Callable[..., Any]) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(
         self,
-        scope: dict[str, Any],
-        receive: Callable[..., Any],
-        send: Callable[..., Any],
+        scope: Scope,
+        receive: Receive,
+        send: Send,
     ) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
@@ -131,7 +135,7 @@ class RequestContextLoggingMiddleware:
             user_id=user_id,
         )
 
-        async def send_wrapper(message: dict[str, Any]) -> None:
+        async def send_wrapper(message: dict[str, object]) -> None:
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
                 if not any(name.lower() == b"x-request-id" for name, _ in headers):

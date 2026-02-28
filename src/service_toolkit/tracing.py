@@ -6,9 +6,12 @@ import logging
 import os
 import threading
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from litestar.types import Middleware
 
 _configure_lock = threading.Lock()
 _configured = False
@@ -68,7 +71,7 @@ def setup_tracing(
     instrument_httpx: bool | None = None,
     instrument_sqlalchemy: bool | None = None,
     instrument_redis: bool | None = None,
-) -> type[Any] | None:
+) -> Middleware | None:
     """Configure global OpenTelemetry provider and return ASGI middleware class.
 
     Environment:
@@ -182,7 +185,7 @@ def setup_tracing(
             RedisInstrumentor().instrument()
             _redis_instrumented = True
 
-    return OpenTelemetryMiddleware
+    return cast("Middleware", OpenTelemetryMiddleware)
 
 
 __all__ = ["setup_tracing"]

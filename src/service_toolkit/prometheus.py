@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
 
 from litestar import Response, get
+from litestar.types import ControllerRouterHandler
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -19,7 +19,11 @@ from prometheus_client import (
 )
 from prometheus_client import multiprocess
 
-ASGIApp = Callable[..., Any]
+Scope = dict[str, object]
+Receive = Callable[[], Awaitable[dict[str, object]]]
+Send = Callable[[dict[str, object]], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+MiddlewareFactory = Callable[..., ASGIApp]
 
 
 def _normalize_service_name(service_name: str) -> str:
@@ -31,7 +35,7 @@ def build_prometheus_instrumentation(
     service_name: str,
     route: str = "/metrics",
     registry: CollectorRegistry | None = None,
-) -> tuple[type[Any], Any]:
+) -> tuple[MiddlewareFactory, ControllerRouterHandler]:
     """Construct Prometheus middleware and metrics endpoint for a service.
 
     Args:
@@ -76,7 +80,7 @@ def build_prometheus_instrumentation(
         registry=instrumentation_registry,
     )
 
-    def resolve_route_label(scope: dict[str, Any]) -> str:
+    def resolve_route_label(scope: Scope) -> str:
         route_handler = scope.get("route_handler")
         if route_handler is not None:
             pattern = getattr(route_handler, "path", None)
@@ -90,9 +94,7 @@ def build_prometheus_instrumentation(
         def __init__(self, app: ASGIApp) -> None:
             self.app = app
 
-        async def __call__(
-            self, scope: dict[str, Any], receive: Callable, send: Callable
-        ) -> None:  # type: ignore[override]
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
             if scope.get("type") != "http":
                 await self.app(scope, receive, send)
                 return
@@ -106,7 +108,7 @@ def build_prometheus_instrumentation(
             status_code = 500
             start = time.perf_counter()
 
-            async def send_wrapper(message: dict[str, Any]) -> None:
+            async def send_wrapper(message: dict[str, object]) -> None:
                 nonlocal status_code
                 if message.get("type") == "http.response.start":
                     status_code = int(message.get("status", 500))
