@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from litestar import Response, get
-from litestar.types import ASGIApp, ControllerRouterHandler
+from litestar.types import ASGIApp, ControllerRouterHandler, Message, Receive, Scope, Send
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -19,9 +19,6 @@ from prometheus_client import (
 )
 from prometheus_client import multiprocess
 
-Scope = dict[str, object]
-Receive = Callable[[], Awaitable[dict[str, object]]]
-Send = Callable[[dict[str, object]], Awaitable[None]]
 MiddlewareFactory = Callable[..., ASGIApp]
 
 
@@ -107,10 +104,10 @@ def build_prometheus_instrumentation(
             status_code = 500
             start = time.perf_counter()
 
-            async def send_wrapper(message: dict[str, object]) -> None:
+            async def send_wrapper(message: Message) -> None:
                 nonlocal status_code
-                if message.get("type") == "http.response.start":
-                    status_code = int(message.get("status", 500))
+                if message["type"] == "http.response.start":
+                    status_code = message["status"]
                 await send(message)
 
             try:

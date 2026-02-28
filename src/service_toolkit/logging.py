@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from contextvars import ContextVar, Token
 from logging import Filter, LogRecord
-from typing import Any
 from uuid import uuid4
 
 from litestar.logging import LoggingConfig
-from litestar.types import ASGIApp
+from litestar.types import ASGIApp, Message, Receive, Scope, Send
 
 DEFAULT_SUPPRESSED_PATTERNS: tuple[str, ...] = (
     "GET /health",
@@ -22,9 +21,6 @@ _TRACE_ID_VAR: ContextVar[str] = ContextVar("leavepulse_trace_id", default="-")
 _USER_ID_VAR: ContextVar[str] = ContextVar("leavepulse_user_id", default="-")
 
 _MAX_CONTEXT_VALUE_LEN = 128
-Scope = dict[str, object]
-Receive = Callable[[], Awaitable[dict[str, object]]]
-Send = Callable[[dict[str, object]], Awaitable[None]]
 
 
 def _context_label(
@@ -41,7 +37,8 @@ def _context_label(
 
 def _extract_header(scope: Scope, name: str) -> str | None:
     target = name.lower().encode()
-    for raw_name, raw_value in scope.get("headers", []):
+    headers = scope.get("headers", [])
+    for raw_name, raw_value in headers:
         if raw_name.lower() != target:
             continue
         return raw_value.decode("utf-8", errors="ignore").strip() or None
@@ -135,9 +132,9 @@ class RequestContextLoggingMiddleware:
             user_id=user_id,
         )
 
-        async def send_wrapper(message: dict[str, object]) -> None:
-            if message.get("type") == "http.response.start":
-                headers = list(message.get("headers") or [])
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message["headers"])
                 if not any(name.lower() == b"x-request-id" for name, _ in headers):
                     headers.append((b"x-request-id", request_id.encode("utf-8")))
                 message["headers"] = headers
