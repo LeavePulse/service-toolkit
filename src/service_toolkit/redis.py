@@ -30,6 +30,9 @@ T = TypeVar("T")
 DEFAULT_REDIS_HOST = "127.0.0.1"
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_REDIS_DB = 0
+DEFAULT_REDIS_SOCKET_CONNECT_TIMEOUT = 2.0
+DEFAULT_REDIS_SOCKET_TIMEOUT = 2.0
+DEFAULT_REDIS_HEALTH_CHECK_INTERVAL = 30.0
 
 
 def _import_redis_async():
@@ -93,9 +96,9 @@ class RedisSettings:
     username: str | None = None
     password: str | None = None
 
-    socket_connect_timeout: float = 2.0
-    socket_timeout: float = 2.0
-    health_check_interval: float = 30.0
+    socket_connect_timeout: float = DEFAULT_REDIS_SOCKET_CONNECT_TIMEOUT
+    socket_timeout: float = DEFAULT_REDIS_SOCKET_TIMEOUT
+    health_check_interval: float = DEFAULT_REDIS_HEALTH_CHECK_INTERVAL
     max_connections: int | None = None
 
     @classmethod
@@ -127,9 +130,9 @@ class RedisSettings:
                 db: int = DEFAULT_REDIS_DB
                 username: str | None = None
                 password: str | None = None
-                socket_connect_timeout: float = 2.0
-                socket_timeout: float = 2.0
-                health_check_interval: float = 30.0
+                socket_connect_timeout: float = DEFAULT_REDIS_SOCKET_CONNECT_TIMEOUT
+                socket_timeout: float = DEFAULT_REDIS_SOCKET_TIMEOUT
+                health_check_interval: float = DEFAULT_REDIS_HEALTH_CHECK_INTERVAL
                 max_connections: int | None = None
 
             loaded = _RedisConfig.load(
@@ -160,13 +163,16 @@ class RedisSettings:
             username=source.get(f"{prefix}USERNAME"),
             password=source.get(f"{prefix}PASSWORD"),
             socket_connect_timeout=_parse_float(
-                source.get(f"{prefix}SOCKET_CONNECT_TIMEOUT"), cls.socket_connect_timeout
+                source.get(f"{prefix}SOCKET_CONNECT_TIMEOUT"),
+                DEFAULT_REDIS_SOCKET_CONNECT_TIMEOUT,
             ),
             socket_timeout=_parse_float(
-                source.get(f"{prefix}SOCKET_TIMEOUT"), cls.socket_timeout
+                source.get(f"{prefix}SOCKET_TIMEOUT"),
+                DEFAULT_REDIS_SOCKET_TIMEOUT,
             ),
             health_check_interval=_parse_float(
-                source.get(f"{prefix}HEALTH_CHECK_INTERVAL"), cls.health_check_interval
+                source.get(f"{prefix}HEALTH_CHECK_INTERVAL"),
+                DEFAULT_REDIS_HEALTH_CHECK_INTERVAL,
             ),
             max_connections=(
                 _parse_int(source.get(f"{prefix}MAX_CONNECTIONS"), 0) or None
@@ -474,11 +480,12 @@ class RedisCache(Generic[T]):
         self._ttl_jitter_ratio = ttl_jitter_ratio
         self._ttl_jitter_max_seconds = ttl_jitter_max_seconds
 
+        msgspec_json: Any | None
         try:  # pragma: no cover - optional
-            import msgspec.json as _msgspec_json  # type: ignore[import-not-found]
+            import msgspec.json as msgspec_json  # type: ignore[import-not-found]
         except ModuleNotFoundError:
-            _msgspec_json = None
-        self._msgspec_json = _msgspec_json
+            msgspec_json = None
+        self._msgspec_json = msgspec_json
 
     def _full_key(self, key: str) -> str:
         return self._keyspace.key(key)

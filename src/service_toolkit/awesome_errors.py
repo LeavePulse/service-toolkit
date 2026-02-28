@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping, TypeAlias
 
-try:  # pragma: no cover - optional dependency
-    from awesome_errors import (
-        ErrorResponseFormat,
-        ErrorTranslator,
-        apply_litestar_openapi_problem_details,
-        create_litestar_exception_handlers,
-    )
-except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
-    if exc.name == "awesome_errors":
-        raise ModuleNotFoundError(
-            "awesome-errors helpers require the optional 'errors' extra. "
-            "Install with 'pip install service-toolkit[errors]' or add "
-            "'awesome-errors' to your service dependencies."
-        ) from exc
-    raise
+if TYPE_CHECKING:
+    ErrorResponseFormat: TypeAlias = Any
+    ErrorTranslator: TypeAlias = Any
+
+    def apply_litestar_openapi_problem_details(*args: Any, **kwargs: Any) -> None: ...
+    def create_litestar_exception_handlers(*args: Any, **kwargs: Any) -> Any: ...
+
+else:
+    try:  # pragma: no cover - optional dependency
+        from awesome_errors import (
+            ErrorResponseFormat,
+            ErrorTranslator,
+            apply_litestar_openapi_problem_details,
+            create_litestar_exception_handlers,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
+        if exc.name == "awesome_errors":
+            raise ModuleNotFoundError(
+                "awesome-errors helpers require the optional 'errors' extra. "
+                "Install with 'pip install service-toolkit[errors]' or add "
+                "'awesome-errors' to your service dependencies."
+            ) from exc
+        raise
 
 
 def build_standard_exception_handlers(

@@ -28,9 +28,15 @@ errors = ["awesome-errors @ git+https://github.com/THEROER/awesome-errors"]
 [dependency-groups]
 dev = [
     "nats-py>=2.6.0,<3",
+    "watchfiles>=1.0.0,<2",
+    "sqlalchemy~=2.0",
+    "python-jose[cryptography]>=3.3.0,<4.0.0",
+    "types-python-jose>=3.5.0.20250531,<4",
+    "awesome-errors @ git+https://github.com/THEROER/awesome-errors",
     "pytest>=8.4.2,<9",
     "pytest-asyncio>=0.24.0,<0.25",
     "ruff>=0.13.1,<0.14",
+    "mypy>=1.18.2,<2",
 ]
 
 [tool.hatch.build.targets.sdist]

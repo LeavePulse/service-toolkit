@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from litestar import Controller, get
 
 
@@ -11,7 +9,7 @@ class HealthController(Controller):
     """Basic health-check endpoints."""
 
     path = "/health"
-    tags: ClassVar[list[str]] = ["Health"]
+    tags = ["Health"]
 
     @get("/", include_in_schema=False, summary="Service health")
     async def health(self) -> dict[str, str]:

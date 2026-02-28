@@ -7,7 +7,11 @@ import sys
 from typing import TYPE_CHECKING
 
 from .health import HealthController
-from .logging import build_standard_logging_config
+from .logging import (
+    RequestContextLoggingMiddleware,
+    bind_log_user_id,
+    build_standard_logging_config,
+)
 from .prometheus import build_prometheus_instrumentation
 from .snowflake import (
     DEFAULT_EPOCH_MS,
@@ -36,6 +40,8 @@ if TYPE_CHECKING:  # pragma: no cover - import-time hinting
 
 __all__ = [
     "HealthController",
+    "RequestContextLoggingMiddleware",
+    "bind_log_user_id",
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
     "build_event",

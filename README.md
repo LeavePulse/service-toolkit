@@ -4,6 +4,8 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 
 - Prometheus instrumentation factory (`build_prometheus_instrumentation`) that exposes a middleware and metrics endpoint tailored per service.
 - Standard logging configuration builder (`build_standard_logging_config`) with health/metrics suppression support (defaults can be overridden).
+- Request-scoped logging context middleware (`RequestContextLoggingMiddleware`) with `request_id`, `trace_id`, and `user_id` fields.
+- SQLAlchemy slow-query logger installer (`install_slow_query_logging`) for unified DB observability.
 - Simple health-check controller for Litestar applications (`HealthController`).
 - Snowflake ID generation helpers (configurable epoch/node setup).
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
@@ -27,6 +29,24 @@ PrometheusMiddleware, metrics_endpoint = build_prometheus_instrumentation(
 app = Litestar(
     route_handlers=[metrics_endpoint, ...],
     middleware=[DefineMiddleware(PrometheusMiddleware), ...],
+)
+```
+
+```python
+from litestar.middleware.base import DefineMiddleware
+from service_toolkit.logging import RequestContextLoggingMiddleware
+
+app = Litestar(
+    middleware=[DefineMiddleware(RequestContextLoggingMiddleware), ...],
+)
+```
+
+```python
+from service_toolkit.db import install_slow_query_logging
+
+install_slow_query_logging(
+    service_name="server-service",
+    threshold_seconds=0.25,
 )
 ```
 

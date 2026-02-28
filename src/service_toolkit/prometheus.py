@@ -6,7 +6,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any
 
 from litestar import Response, get
 from prometheus_client import (
@@ -31,7 +31,7 @@ def build_prometheus_instrumentation(
     service_name: str,
     route: str = "/metrics",
     registry: CollectorRegistry | None = None,
-) -> Tuple[type, Callable[..., Response[bytes]]]:
+) -> tuple[type[Any], Any]:
     """Construct Prometheus middleware and metrics endpoint for a service.
 
     Args:
@@ -138,13 +138,14 @@ def prepare_multiprocess_directory(directory: str | os.PathLike[str] | None = No
     Call this once in the parent process before spawning worker processes.
     """
 
-    target = Path(
-        directory
-        or os.getenv("PROMETHEUS_MULTIPROC_DIR")
-        or os.getenv("prometheus_multiproc_dir", "")
-    )
-    if not target:
+    resolved_directory: str | os.PathLike[str] | None = directory
+    if resolved_directory is None:
+        resolved_directory = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
+            "prometheus_multiproc_dir"
+        )
+    if not resolved_directory:
         return None
+    target = Path(resolved_directory)
 
     target.mkdir(parents=True, exist_ok=True)
     for item in target.iterdir():

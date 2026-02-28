@@ -27,6 +27,12 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
 
 
 DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
+DEFAULT_NATS_MAX_RECONNECT_ATTEMPTS = 60
+DEFAULT_NATS_RECONNECT_TIME_WAIT = 2.0
+DEFAULT_NATS_PING_INTERVAL = 60.0
+DEFAULT_NATS_CONNECT_TIMEOUT = 2.0
+DEFAULT_NATS_DRAIN_TIMEOUT = 5.0
+DEFAULT_NATS_REQUEST_TIMEOUT = 2.0
 
 MessageCallback = Callable[[Msg], Awaitable[None]]
 
@@ -84,12 +90,12 @@ class NATSSettings:
     user: str | None = None
     password: str | None = None
     token: str | None = None
-    max_reconnect_attempts: int = 60
-    reconnect_time_wait: float = 2.0
-    ping_interval: float = 60.0
-    connect_timeout: float = 2.0
-    drain_timeout: float = 5.0
-    request_timeout: float = 2.0
+    max_reconnect_attempts: int = DEFAULT_NATS_MAX_RECONNECT_ATTEMPTS
+    reconnect_time_wait: float = DEFAULT_NATS_RECONNECT_TIME_WAIT
+    ping_interval: float = DEFAULT_NATS_PING_INTERVAL
+    connect_timeout: float = DEFAULT_NATS_CONNECT_TIMEOUT
+    drain_timeout: float = DEFAULT_NATS_DRAIN_TIMEOUT
+    request_timeout: float = DEFAULT_NATS_REQUEST_TIMEOUT
     jetstream_domain: str | None = None
 
     @classmethod
@@ -121,12 +127,12 @@ class NATSSettings:
                 user: str | None = None
                 password: str | None = None
                 token: str | None = None
-                max_reconnect_attempts: int = 60
-                reconnect_time_wait: float = 2.0
-                ping_interval: float = 60.0
-                connect_timeout: float = 2.0
-                drain_timeout: float = 5.0
-                request_timeout: float = 2.0
+                max_reconnect_attempts: int = DEFAULT_NATS_MAX_RECONNECT_ATTEMPTS
+                reconnect_time_wait: float = DEFAULT_NATS_RECONNECT_TIME_WAIT
+                ping_interval: float = DEFAULT_NATS_PING_INTERVAL
+                connect_timeout: float = DEFAULT_NATS_CONNECT_TIMEOUT
+                drain_timeout: float = DEFAULT_NATS_DRAIN_TIMEOUT
+                request_timeout: float = DEFAULT_NATS_REQUEST_TIMEOUT
                 jetstream_domain: str | None = None
 
             loaded = _NATSConfig.load(
@@ -158,22 +164,28 @@ class NATSSettings:
         password = source.get(f"{prefix}PASSWORD")
         token = source.get(f"{prefix}TOKEN")
         max_reconnect_attempts = _parse_int(
-            source.get(f"{prefix}MAX_RECONNECT_ATTEMPTS"), cls.max_reconnect_attempts
+            source.get(f"{prefix}MAX_RECONNECT_ATTEMPTS"),
+            DEFAULT_NATS_MAX_RECONNECT_ATTEMPTS,
         )
         reconnect_time_wait = _parse_float(
-            source.get(f"{prefix}RECONNECT_TIME_WAIT"), cls.reconnect_time_wait
+            source.get(f"{prefix}RECONNECT_TIME_WAIT"),
+            DEFAULT_NATS_RECONNECT_TIME_WAIT,
         )
         ping_interval = _parse_float(
-            source.get(f"{prefix}PING_INTERVAL"), cls.ping_interval
+            source.get(f"{prefix}PING_INTERVAL"),
+            DEFAULT_NATS_PING_INTERVAL,
         )
         connect_timeout = _parse_float(
-            source.get(f"{prefix}CONNECT_TIMEOUT"), cls.connect_timeout
+            source.get(f"{prefix}CONNECT_TIMEOUT"),
+            DEFAULT_NATS_CONNECT_TIMEOUT,
         )
         drain_timeout = _parse_float(
-            source.get(f"{prefix}DRAIN_TIMEOUT"), cls.drain_timeout
+            source.get(f"{prefix}DRAIN_TIMEOUT"),
+            DEFAULT_NATS_DRAIN_TIMEOUT,
         )
         request_timeout = _parse_float(
-            source.get(f"{prefix}REQUEST_TIMEOUT"), cls.request_timeout
+            source.get(f"{prefix}REQUEST_TIMEOUT"),
+            DEFAULT_NATS_REQUEST_TIMEOUT,
         )
         jetstream_domain = source.get(f"{prefix}JETSTREAM_DOMAIN")
 
