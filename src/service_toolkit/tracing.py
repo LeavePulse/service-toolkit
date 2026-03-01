@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 logger = logging.getLogger(__name__)
 

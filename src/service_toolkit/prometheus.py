@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 
 from litestar import Response, get
@@ -47,21 +47,21 @@ def build_prometheus_instrumentation(
     multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
         "prometheus_multiproc_dir"
     )
-    multiprocess_enabled = False
-
     if registry is not None:
         metrics_registry = registry
-    else:
+        instrumentation_registry = registry
+    elif multiprocess_dir:
+        target_dir = Path(multiprocess_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
         metrics_registry = CollectorRegistry()
-        if multiprocess_dir:
-            multiprocess_enabled = True
-            target_dir = Path(multiprocess_dir)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            multiprocess.MultiProcessCollector(metrics_registry)
-
-    # In multiprocess mode, metrics must be registered in the default registry.
-    # The endpoint registry is dedicated to the multiprocess collector.
-    instrumentation_registry = REGISTRY if multiprocess_enabled else metrics_registry
+        multiprocess.MultiProcessCollector(metrics_registry)
+        # In multiprocess mode instrumentation must use the default global registry.
+        instrumentation_registry = REGISTRY
+    else:
+        # Use global registry by default so custom service metrics registered in
+        # module scope (Counter/Gauge/Histogram without explicit registry) are exposed.
+        metrics_registry = REGISTRY
+        instrumentation_registry = REGISTRY
 
     request_count = Counter(
         f"{normalized}_http_requests_total",
