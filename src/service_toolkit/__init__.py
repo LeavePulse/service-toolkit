@@ -21,6 +21,7 @@ from .snowflake import (
     reset_default_generator,
 )
 from .events import build_event, utc_now_iso
+from .rate_limit import enforce_request_rate_limit, rate_limited_request
 
 if TYPE_CHECKING:  # pragma: no cover - import-time hinting
     from .leader_elected_listener import LeaderElectedListener
@@ -46,6 +47,8 @@ __all__ = [
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
     "build_event",
+    "enforce_request_rate_limit",
+    "rate_limited_request",
     "DEFAULT_NATS_URL",
     "DEFAULT_EPOCH_MS",
     "DEFAULT_REDIS_DB",

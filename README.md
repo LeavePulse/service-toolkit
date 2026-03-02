@@ -10,6 +10,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - Simple health-check controller for Litestar applications (`HealthController`).
 - Snowflake ID generation helpers (configurable epoch/node setup).
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
+- Redis-backed request rate limiting helpers (`enforce_request_rate_limit`, `rate_limited_request`).
 - (Extensible) space for other shared service utilities.
 
 > **Note**
@@ -82,6 +83,18 @@ async def publish_user_created(event: dict[str, object]) -> None:
     async with NATSClient(settings) as client:
         await client.publish_json("auth.user.created", event)
 ```
+
+```python
+from service_toolkit.rate_limit import rate_limited_request
+
+
+@rate_limited_request(bucket="auth:login", limit=20, window_seconds=60)
+async def login(request, payload):
+    ...
+```
+
+If `request.app.stores["main"]` is configured, counters are stored there (Redis-backed in
+most services). Otherwise, the helper falls back to a process-local window counter.
 
 `NATSSettings.from_env()` automatically uses [`env-settings`](https://github.com/THEROER/env-settings)
 when available, yet remains compatible with plain environment variables or manual
