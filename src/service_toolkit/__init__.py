@@ -22,6 +22,7 @@ from .snowflake import (
 )
 from .events import build_event, utc_now_iso
 from .rate_limit import enforce_request_rate_limit, rate_limited_request
+from .async_lookup_cache import AsyncLookupCache
 
 if TYPE_CHECKING:  # pragma: no cover - import-time hinting
     from .leader_elected_listener import LeaderElectedListener
@@ -47,6 +48,7 @@ __all__ = [
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
     "build_event",
+    "AsyncLookupCache",
     "enforce_request_rate_limit",
     "rate_limited_request",
     "DEFAULT_NATS_URL",

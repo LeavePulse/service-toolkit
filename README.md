@@ -11,6 +11,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - Snowflake ID generation helpers (configurable epoch/node setup).
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
 - Redis-backed request rate limiting helpers (`enforce_request_rate_limit`, `rate_limited_request`).
+- Async lookup cache with TTL, in-flight deduplication, and concurrency limits (`AsyncLookupCache`).
 - (Extensible) space for other shared service utilities.
 
 > **Note**
@@ -95,6 +96,18 @@ async def login(request, payload):
 
 If `request.app.stores["main"]` is configured, counters are stored there (Redis-backed in
 most services). Otherwise, the helper falls back to a process-local window counter.
+
+```python
+from service_toolkit import AsyncLookupCache
+
+dns_cache = AsyncLookupCache[str, list[str]](
+    success_ttl_seconds=30.0,
+    empty_ttl_seconds=10.0,
+    is_empty=lambda values: not values,
+    max_entries=2048,
+    max_concurrency=64,
+)
+```
 
 `NATSSettings.from_env()` automatically uses [`env-settings`](https://github.com/THEROER/env-settings)
 when available, yet remains compatible with plain environment variables or manual
