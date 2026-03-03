@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import TYPE_CHECKING
 
 from .health import HealthController
 from .logging import (
@@ -12,6 +11,7 @@ from .logging import (
     bind_log_user_id,
     build_standard_logging_config,
 )
+from .cache import CacheMode, LookupCache, RedisFailureMode
 from .prometheus import build_prometheus_instrumentation
 from .snowflake import (
     DEFAULT_EPOCH_MS,
@@ -21,34 +21,23 @@ from .snowflake import (
     reset_default_generator,
 )
 from .events import build_event, utc_now_iso
-from .rate_limit import enforce_request_rate_limit, rate_limited_request
-from .async_lookup_cache import AsyncLookupCache
-
-if TYPE_CHECKING:  # pragma: no cover - import-time hinting
-    from .leader_elected_listener import LeaderElectedListener
-    from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
-    from .redis import (
-        DEFAULT_REDIS_DB,
-        DEFAULT_REDIS_HOST,
-        DEFAULT_REDIS_PORT,
-        Keyspace,
-        LeaderLease,
-        RedisCache,
-        RedisClient,
-        RedisLock,
-        RedisSettings,
-        ttl_with_jitter,
-    )
-    from .tracing import setup_tracing
+from .rate_limit import (
+    RateLimitFailureMode,
+    enforce_request_rate_limit,
+    rate_limited_request,
+)
 
 __all__ = [
+    "CacheMode",
     "HealthController",
+    "LookupCache",
+    "RateLimitFailureMode",
     "RequestContextLoggingMiddleware",
+    "RedisFailureMode",
     "bind_log_user_id",
     "build_prometheus_instrumentation",
     "build_standard_logging_config",
     "build_event",
-    "AsyncLookupCache",
     "enforce_request_rate_limit",
     "rate_limited_request",
     "DEFAULT_NATS_URL",
@@ -61,9 +50,9 @@ __all__ = [
     "LeaderLease",
     "NATSClient",
     "NATSSettings",
-    "RedisCache",
     "RedisClient",
     "RedisLock",
+    "RedisReplicaStore",
     "RedisSettings",
     "SnowflakeGenerator",
     "configure_default_generator",
@@ -84,9 +73,9 @@ _OPTIONAL_EXPORTS = {
     "Keyspace",
     "LeaderElectedListener",
     "LeaderLease",
-    "RedisCache",
     "RedisClient",
     "RedisLock",
+    "RedisReplicaStore",
     "RedisSettings",
     "setup_tracing",
     "ttl_with_jitter",
@@ -102,9 +91,9 @@ _OPTIONAL_EXPORT_MODULES = {
     "Keyspace": ".redis",
     "LeaderElectedListener": ".leader_elected_listener",
     "LeaderLease": ".redis",
-    "RedisCache": ".redis",
     "RedisClient": ".redis",
     "RedisLock": ".redis",
+    "RedisReplicaStore": ".snapshot_store",
     "RedisSettings": ".redis",
     "setup_tracing": ".tracing",
     "ttl_with_jitter": ".redis",

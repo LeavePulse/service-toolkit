@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from threading import Lock
 from typing import TYPE_CHECKING
 
 try:
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 class JWKSCache:
     """Cache JWKS keys with a TTL to avoid frequent network calls."""
 
+    _shared_caches: dict[tuple[str, int, float], JWKSCache] = {}
+    _shared_lock = Lock()
+
     def __init__(self, *, url: str, ttl_seconds: int, timeout_seconds: float) -> None:
         self._url = url
         self._ttl_seconds = ttl_seconds
@@ -33,6 +37,24 @@ class JWKSCache:
         self._expires_at = 0.0
         self._keys: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+
+    @classmethod
+    def shared(
+        cls, *, url: str, ttl_seconds: int, timeout_seconds: float
+    ) -> JWKSCache:
+        """Return a process-wide cache for a specific JWKS endpoint config."""
+
+        key = (url, int(ttl_seconds), float(timeout_seconds))
+        with cls._shared_lock:
+            cache = cls._shared_caches.get(key)
+            if cache is None:
+                cache = cls(
+                    url=url,
+                    ttl_seconds=int(ttl_seconds),
+                    timeout_seconds=float(timeout_seconds),
+                )
+                cls._shared_caches[key] = cache
+            return cache
 
     async def get_key(self, kid: str) -> dict[str, Any] | None:
         keys = await self._get_keys()

@@ -10,8 +10,9 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - Simple health-check controller for Litestar applications (`HealthController`).
 - Snowflake ID generation helpers (configurable epoch/node setup).
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
-- Redis-backed request rate limiting helpers (`enforce_request_rate_limit`, `rate_limited_request`).
-- Async lookup cache with TTL, in-flight deduplication, and concurrency limits (`AsyncLookupCache`).
+- Redis-backed request rate limiting helpers with explicit failure policies (`enforce_request_rate_limit`, `rate_limited_request`).
+- Unified local/Redis/hybrid lookup cache with TTL, in-flight deduplication, and Redis fallback policies (`LookupCache`).
+- Shared JWT/JWKS verification helpers with process-wide JWKS reuse (`build_shared_jwt_verifier`, `JWKSCache.shared`).
 - (Extensible) space for other shared service utilities.
 
 > **Note**
@@ -19,6 +20,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 > - `pip install service-toolkit[nats]` for NATS helpers
 > - `pip install service-toolkit[redis]` for Redis helpers
 > - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
+> - `pip install service-toolkit[auth]` for JWT/JWKS helpers
 
 ## Usage
 
@@ -94,18 +96,41 @@ async def login(request, payload):
     ...
 ```
 
-If `request.app.stores["main"]` is configured, counters are stored there (Redis-backed in
-most services). Otherwise, the helper falls back to a process-local window counter.
+```python
+from service_toolkit.auth import build_shared_jwt_verifier
+
+jwt_verifier = build_shared_jwt_verifier(
+    jwks_url="http://auth-service:8000/auth/.well-known/jwks.json",
+    jwks_ttl_seconds=3600,
+    http_timeout_seconds=5.0,
+    issuer="leavepulse-auth",
+    audience="leavepulse.api",
+)
+```
+
+`build_shared_jwt_verifier()` reuses one JWKS cache per process/config pair, so
+multiple modules in the same service do not fan out duplicate JWKS refreshes.
+
+If `request.app.stores["main"]` is a Litestar `RedisStore`, counters are stored there using
+an atomic Redis fixed window. When Redis is unavailable, the helper follows
+`RateLimitFailureMode`: local fallback, bypass, or raise.
 
 ```python
-from service_toolkit import AsyncLookupCache
+from service_toolkit import CacheMode, LookupCache, RedisFailureMode
+from service_toolkit.redis import Keyspace
 
-dns_cache = AsyncLookupCache[str, list[str]](
-    success_ttl_seconds=30.0,
+dns_cache = LookupCache[str, list[str]](
+    mode=CacheMode.HYBRID,
+    local_ttl_seconds=30.0,
     empty_ttl_seconds=10.0,
     is_empty=lambda values: not values,
     max_entries=2048,
     max_concurrency=64,
+    redis_client=redis.client,
+    redis_keyspace=Keyspace("dns"),
+    redis_ttl_seconds=30,
+    redis_empty_ttl_seconds=10,
+    redis_failure_mode=RedisFailureMode.LOCAL_FALLBACK,
 )
 ```
 
@@ -114,7 +139,8 @@ when available, yet remains compatible with plain environment variables or manua
 parameter construction.
 
 ```python
-from service_toolkit.redis import Keyspace, RedisCache, RedisClient, RedisSettings
+from service_toolkit import CacheMode, LookupCache, RedisFailureMode
+from service_toolkit.redis import Keyspace, RedisClient, RedisSettings
 
 settings = RedisSettings.from_env(prefix="REDIS_")
 
@@ -125,15 +151,18 @@ async def get_server_summary(server_id: int) -> dict[str, object]:
 
 async def load(server_id: int) -> dict[str, object]:
     async with RedisClient(settings) as redis:
-        cache = RedisCache(
-            redis.client,
-            keyspace=Keyspace("cache"),
-            ttl_jitter_ratio=0.1,
+        cache = LookupCache[str, dict[str, object]](
+            mode=CacheMode.HYBRID,
+            local_ttl_seconds=60.0,
+            redis_client=redis.client,
+            redis_keyspace=Keyspace("cache"),
+            redis_ttl_seconds=60,
+            redis_ttl_jitter_ratio=0.1,
+            redis_failure_mode=RedisFailureMode.LOCAL_FALLBACK,
         )
-        return await cache.get_or_set_json(
+        return await cache.get(
             f"server:{server_id}",
             lambda: get_server_summary(server_id),
-            ttl_seconds=60,
         )
 ```
 

@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
+from service_toolkit.cache import CacheMode, LookupCache, RedisFailureMode
 from service_toolkit.redis import (
     Keyspace,
     LeaderLease,
-    RedisCache,
     RedisLock,
     ttl_with_jitter,
 )
@@ -103,9 +103,15 @@ async def test_redis_lock_extend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cache_get_or_set_json() -> None:
+async def test_lookup_cache_hybrid_uses_redis_and_local_layers() -> None:
     client = FakeRedis()
-    cache = RedisCache(client, keyspace=Keyspace("cache"), default_ttl_seconds=60)
+    cache = LookupCache[str, dict[str, int]](
+        mode=CacheMode.HYBRID,
+        local_ttl_seconds=60.0,
+        redis_client=client,
+        redis_keyspace=Keyspace("cache"),
+        redis_ttl_seconds=60,
+    )
     calls = 0
 
     async def producer() -> dict[str, int]:
@@ -113,11 +119,49 @@ async def test_cache_get_or_set_json() -> None:
         calls += 1
         return {"value": calls}
 
-    value1 = await cache.get_or_set_json("foo", producer, ttl_seconds=60)
-    value2 = await cache.get_or_set_json("foo", producer, ttl_seconds=60)
+    value1 = await cache.get("foo", producer)
+    value2 = await cache.get("foo", producer)
 
     assert value1 == {"value": 1}
     assert value2 == {"value": 1}
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_lookup_cache_hybrid_falls_back_to_local_when_redis_breaks() -> None:
+    class BrokenRedis(FakeRedis):
+        async def get(self, key: str) -> bytes | None:
+            raise RuntimeError(key)
+
+        async def set(
+            self,
+            key: str,
+            value: bytes | str,
+            *,
+            ex: int | None = None,
+            nx: bool = False,
+            px: int | None = None,
+        ) -> bool | None:
+            raise RuntimeError((key, ex, nx, px, value))
+
+    client = BrokenRedis()
+    cache = LookupCache[str, str](
+        mode=CacheMode.HYBRID,
+        local_ttl_seconds=60.0,
+        redis_client=client,
+        redis_keyspace=Keyspace("cache"),
+        redis_ttl_seconds=60,
+        redis_failure_mode=RedisFailureMode.LOCAL_FALLBACK,
+    )
+    calls = 0
+
+    async def producer() -> str:
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    assert await cache.get("foo", producer) == "ok"
+    assert await cache.get("foo", producer) == "ok"
     assert calls == 1
 
 

@@ -112,14 +112,17 @@ class NATSSettings:
         allows manual instantiation of :class:`NATSSettings`.
         """
 
+        base_settings_cls: type[Any] | None
         try:
             from env_settings import BaseSettings as _BaseSettings  # type: ignore
         except ModuleNotFoundError:  # pragma: no cover - optional dependency
-            _BaseSettings = None
+            base_settings_cls = None
+        else:
+            base_settings_cls = _BaseSettings
 
-        if _BaseSettings is not None:
+        if base_settings_cls is not None:
 
-            class _NATSConfig(_BaseSettings):  # type: ignore[misc]
+            class _NATSConfig(base_settings_cls):  # type: ignore[misc, valid-type]
                 servers: str | list[str] | None = None
                 name: str | None = None
                 user: str | None = None

@@ -5,23 +5,44 @@ from typing import Any, cast
 import pytest
 from litestar.exceptions import HTTPException
 
-from service_toolkit.rate_limit import enforce_request_rate_limit, rate_limited_request
+from service_toolkit.rate_limit import (
+    RateLimitFailureMode,
+    enforce_request_rate_limit,
+    rate_limited_request,
+)
 
 
-class FakeStore:
+class FakeRedisClient:
     def __init__(self) -> None:
-        self.data: dict[str, bytes] = {}
+        self.counters: dict[str, int] = {}
 
-    async def get(self, key: str) -> bytes | None:
-        return self.data.get(key)
+    async def eval(
+        self,
+        script: str,
+        numkeys: int,
+        key: str,
+        ttl: int,
+    ) -> int:
+        _ = script, numkeys, ttl
+        current = self.counters.get(key, 0) + 1
+        self.counters[key] = current
+        return current
 
-    async def set(self, key: str, value: bytes, *, expires_in: int) -> None:
-        _ = expires_in
-        self.data[key] = value
+
+class FakeRedisStore:
+    def __init__(self) -> None:
+        self._redis = FakeRedisClient()
+
+    def _make_key(self, key: str) -> str:
+        return f"LITESTAR:{key}"
+
+
+class FakeUnsupportedStore:
+    pass
 
 
 class FakeApp:
-    def __init__(self, store: FakeStore | None) -> None:
+    def __init__(self, store: object | None) -> None:
         self.stores = {"main": store} if store is not None else {}
 
 
@@ -31,14 +52,14 @@ class FakeClient:
 
 
 class FakeRequest:
-    def __init__(self, host: str = "127.0.0.1", store: FakeStore | None = None) -> None:
+    def __init__(self, host: str = "127.0.0.1", store: object | None = None) -> None:
         self.client = FakeClient(host)
         self.app = FakeApp(store)
 
 
 @pytest.mark.asyncio
 async def test_enforce_request_rate_limit_blocks_after_limit() -> None:
-    store = FakeStore()
+    store = FakeRedisStore()
     request = cast(Any, FakeRequest(store=store))
 
     await enforce_request_rate_limit(
@@ -110,8 +131,45 @@ async def test_enforce_request_rate_limit_local_fallback_uses_subject_hash() -> 
 
 
 @pytest.mark.asyncio
+async def test_enforce_request_rate_limit_bypasses_when_backend_is_unsupported() -> None:
+    request = cast(Any, FakeRequest(store=FakeUnsupportedStore()))
+
+    await enforce_request_rate_limit(
+        request,
+        bucket="auth:bypass",
+        limit=1,
+        window_seconds=60,
+        hash_subject=False,
+        failure_mode=RateLimitFailureMode.BYPASS,
+    )
+    await enforce_request_rate_limit(
+        request,
+        bucket="auth:bypass",
+        limit=1,
+        window_seconds=60,
+        hash_subject=False,
+        failure_mode=RateLimitFailureMode.BYPASS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_enforce_request_rate_limit_raises_when_backend_is_unsupported() -> None:
+    request = cast(Any, FakeRequest(store=FakeUnsupportedStore()))
+
+    with pytest.raises(RuntimeError):
+        await enforce_request_rate_limit(
+            request,
+            bucket="auth:raise",
+            limit=1,
+            window_seconds=60,
+            hash_subject=False,
+            failure_mode=RateLimitFailureMode.RAISE,
+        )
+
+
+@pytest.mark.asyncio
 async def test_rate_limited_request_decorator_uses_request_param() -> None:
-    store = FakeStore()
+    store = FakeRedisStore()
     request = cast(Any, FakeRequest(store=store))
     calls: list[int] = []
 
@@ -135,7 +193,7 @@ async def test_rate_limited_request_decorator_uses_request_param() -> None:
 
 @pytest.mark.asyncio
 async def test_rate_limited_request_decorator_works_for_method_handlers() -> None:
-    store = FakeStore()
+    store = FakeRedisStore()
     request = cast(Any, FakeRequest(store=store))
 
     class DemoController:
