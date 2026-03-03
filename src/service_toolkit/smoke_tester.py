@@ -8,6 +8,7 @@ import sys
 import time
 import httpx
 
+
 def check_endpoint(client: httpx.Client, url: str, name: str) -> bool:
     try:
         response = client.get(url)
@@ -19,17 +20,18 @@ def check_endpoint(client: httpx.Client, url: str, name: str) -> bool:
         print(f"❌ {name} check failed: {e} ({url})")
     return False
 
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: lp-smoke-test <base_url> [service_name]")
         sys.exit(1)
-        
+
     base_url = sys.argv[1].rstrip("/")
     service_name = sys.argv[2] if len(sys.argv) > 2 else "unknown"
-    
+
     # Wait for service to be ready (retry loop)
     print(f"🔍 Starting smoke tests for {service_name} at {base_url}...")
-    
+
     with httpx.Client(timeout=5.0) as client:
         # 1. Wait for /health
         retries = 10
@@ -38,16 +40,16 @@ def main():
             if check_endpoint(client, f"{base_url}/health", "Health"):
                 healthy = True
                 break
-            print(f"   Waiting for service... ({i+1}/{retries})")
+            print(f"   Waiting for service... ({i + 1}/{retries})")
             time.sleep(2)
-            
+
         if not healthy:
             sys.exit(1)
-            
+
         # 2. Check /ready
         if not check_endpoint(client, f"{base_url}/ready", "Readiness"):
             sys.exit(1)
-            
+
         # 3. Check /metrics
         try:
             resp = client.get(f"{base_url}/metrics")
@@ -57,7 +59,9 @@ def main():
                 if "http_requests_total" in content or "process_cpu_seconds" in content:
                     print("✅ Metrics check passed (found Prometheus data)")
                 else:
-                    print("❌ Metrics check failed: No standard metrics found in output")
+                    print(
+                        "❌ Metrics check failed: No standard metrics found in output"
+                    )
                     sys.exit(1)
             else:
                 print(f"❌ Metrics check failed: status {resp.status_code}")
@@ -65,10 +69,10 @@ def main():
         except Exception as e:
             print(f"❌ Metrics check failed: {e}")
             sys.exit(1)
-            
-    print(f"
-🎉 Smoke tests passed for {service_name}!")
+
+    print(f"🎉 Smoke tests passed for {service_name}!")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

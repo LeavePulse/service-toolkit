@@ -97,4 +97,3 @@ async def test_caches_empty_results_with_dedicated_ttl() -> None:
     await cache.get("empty", loader)
 
     assert calls == 2
-

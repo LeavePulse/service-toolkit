@@ -8,7 +8,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from litestar import Response, get
-from litestar.types import ASGIApp, ControllerRouterHandler, Message, Receive, Scope, Send
+from litestar.types import (
+    ASGIApp,
+    ControllerRouterHandler,
+    Message,
+    Receive,
+    Scope,
+    Send,
+)
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -133,7 +140,9 @@ def build_prometheus_instrumentation(
     return _prometheus_middleware, metrics_endpoint
 
 
-def prepare_multiprocess_directory(directory: str | os.PathLike[str] | None = None) -> Path | None:
+def prepare_multiprocess_directory(
+    directory: str | os.PathLike[str] | None = None,
+) -> Path | None:
     """Create (and clean) the prometheus multiprocess directory.
 
     Call this once in the parent process before spawning worker processes.

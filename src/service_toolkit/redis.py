@@ -320,7 +320,9 @@ class RedisLock:
     async def release(self) -> bool:
         if not self._held:
             return False
-        result = await self._client.eval(_LOCK_RELEASE_SCRIPT, 1, self._key, self._token)
+        result = await self._client.eval(
+            _LOCK_RELEASE_SCRIPT, 1, self._key, self._token
+        )
         self._held = False
         return int(result or 0) == 1
 
@@ -493,7 +495,9 @@ class RedisCache(Generic[T]):
     def _encode_json(self, value: Any) -> bytes:
         if self._msgspec_json is not None:
             return self._msgspec_json.encode(value)
-        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
 
     def _decode_json(self, data: bytes, *, type: Any | None = None) -> Any:
         if self._msgspec_json is not None:
@@ -516,7 +520,9 @@ class RedisCache(Generic[T]):
     async def get_bytes(self, key: str) -> bytes | None:
         return await self._client.get(self._full_key(key))
 
-    async def set_bytes(self, key: str, value: bytes, *, ttl_seconds: int | None = None) -> bool:
+    async def set_bytes(
+        self, key: str, value: bytes, *, ttl_seconds: int | None = None
+    ) -> bool:
         ttl = self._effective_ttl(ttl_seconds)
         result = await self._client.set(self._full_key(key), value, ex=ttl)
         return bool(result)
@@ -530,8 +536,12 @@ class RedisCache(Generic[T]):
             return None
         return self._decode_json(data, type=type)
 
-    async def set_json(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> bool:
-        return await self.set_bytes(key, self._encode_json(value), ttl_seconds=ttl_seconds)
+    async def set_json(
+        self, key: str, value: Any, *, ttl_seconds: int | None = None
+    ) -> bool:
+        return await self.set_bytes(
+            key, self._encode_json(value), ttl_seconds=ttl_seconds
+        )
 
     async def get_or_set_json(
         self,

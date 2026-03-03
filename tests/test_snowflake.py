@@ -27,7 +27,9 @@ def test_generate_id_auto_configures(monkeypatch) -> None:
 
     dummy = DummyGenerator(worker_id=1)
 
-    monkeypatch.setattr(snowflake, "_Registry", type("_R", (), {"lock": dummy._LOCK, "instance": dummy}))
+    monkeypatch.setattr(
+        snowflake, "_Registry", type("_R", (), {"lock": dummy._LOCK, "instance": dummy})
+    )
 
     value = snowflake.generate_id()
     assert isinstance(value, int)

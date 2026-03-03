@@ -25,4 +25,3 @@ def resolve_cors_origins(
 
 
 __all__ = ["resolve_cors_origins"]
-

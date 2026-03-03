@@ -35,4 +35,3 @@ class TimestampMixin:
 
 
 __all__ = ["Base", "TimestampMixin", "utcnow"]
-

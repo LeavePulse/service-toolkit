@@ -121,4 +121,3 @@ class GatewayCommandBus:
 
 
 __all__ = ["GatewayCommandBus", "GatewayCommandBusConfig"]
-

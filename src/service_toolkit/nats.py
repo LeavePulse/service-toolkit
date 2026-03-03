@@ -45,9 +45,7 @@ def _parse_servers(value: str | None) -> tuple[str, ...]:
     if not value:
         return (DEFAULT_NATS_URL,)
     servers = tuple(
-        item.strip()
-        for item in re.split(r"[;,\s]+", value)
-        if item.strip()
+        item.strip() for item in re.split(r"[;,\s]+", value) if item.strip()
     )
     if servers:
         return servers
@@ -435,7 +433,11 @@ class NATSClient:
         mismatches: list[str] = []
         existing_subject = (getattr(info.config, "filter_subject", None) or "").strip()
         expected_subject = (subject or "").strip()
-        if expected_subject and existing_subject and existing_subject != expected_subject:
+        if (
+            expected_subject
+            and existing_subject
+            and existing_subject != expected_subject
+        ):
             mismatches.append(
                 f"filter_subject existing={existing_subject!r} expected={expected_subject!r}"
             )
@@ -461,7 +463,9 @@ class NATSClient:
             return
 
         try:
-            await asyncio.wait_for(self._connection.drain(), timeout=self.settings.drain_timeout)
+            await asyncio.wait_for(
+                self._connection.drain(), timeout=self.settings.drain_timeout
+            )
         except asyncio.TimeoutError:
             await self._connection.close()
         finally:

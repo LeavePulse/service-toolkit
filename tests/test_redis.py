@@ -4,7 +4,13 @@ import asyncio
 
 import pytest
 
-from service_toolkit.redis import Keyspace, LeaderLease, RedisCache, RedisLock, ttl_with_jitter
+from service_toolkit.redis import (
+    Keyspace,
+    LeaderLease,
+    RedisCache,
+    RedisLock,
+    ttl_with_jitter,
+)
 
 
 class FakeRedis:
@@ -37,7 +43,9 @@ class FakeRedis:
             return 1
         return 0
 
-    async def eval(self, script: str, num_keys: int, key: str, token: str, *args: str) -> int:
+    async def eval(
+        self, script: str, num_keys: int, key: str, token: str, *args: str
+    ) -> int:
         _ = (num_keys, args)
         current = self._store.get(key)
         if current != token.encode("utf-8"):
@@ -128,7 +136,9 @@ async def test_lock_wait_acquires_after_release() -> None:
     task = asyncio.create_task(releaser())
     try:
         assert (
-            await lock2.acquire_with_wait(timeout_seconds=1.0, initial_delay_seconds=0.01)
+            await lock2.acquire_with_wait(
+                timeout_seconds=1.0, initial_delay_seconds=0.01
+            )
             is True
         )
     finally:

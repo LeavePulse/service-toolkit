@@ -110,4 +110,3 @@ class AsyncLookupCache(Generic[K, V]):
 
         async with self._semaphore:
             return await loader()
-

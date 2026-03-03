@@ -22,4 +22,3 @@ def default_openapi_render_plugins():
 
 
 __all__ = ["default_openapi_render_plugins"]
-

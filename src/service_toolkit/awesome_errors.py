@@ -42,12 +42,14 @@ def build_standard_exception_handlers(
     """Build Litestar exception handlers using a consistent RFC7807 format."""
 
     if problem_type_resolver is None:
+
         def default_problem_type_resolver(error: Any) -> str:
             return f"urn:{service_name}:error:{error.code.value.lower()}"
 
         problem_type_resolver = default_problem_type_resolver
 
     if problem_extension_builder is None:
+
         def default_problem_extension_builder(_error: Any) -> Mapping[str, Any]:
             return {"service": service_name}
 
@@ -100,7 +102,9 @@ def build_error_translator_with_defaults(
         for locale, locale_translations in custom_translations.items():
             if not locale_translations:
                 continue
-            translator.add_translations(locale, dict(locale_translations), persist=False)
+            translator.add_translations(
+                locale, dict(locale_translations), persist=False
+            )
 
     return translator
 

@@ -22,7 +22,9 @@ class DummyConnection:
         self.requests: list[tuple[str, bytes, dict[str, str] | None]] = []
         self._jetstream = DummyJetStream()
 
-    async def publish(self, subject: str, payload: bytes, headers: dict[str, str] | None = None) -> None:
+    async def publish(
+        self, subject: str, payload: bytes, headers: dict[str, str] | None = None
+    ) -> None:
         self.published.append((subject, payload, dict(headers or {})))
 
     async def request(
@@ -94,7 +96,7 @@ async def test_client_publish_and_request(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert len(connection.published) == 2
     assert connection.published[0][0] == "demo.subject"
-    assert connection.published[1][1].decode("utf-8") == "{\"key\": \"value\"}"
+    assert connection.published[1][1].decode("utf-8") == '{"key": "value"}'
     assert response.data == b"reply"
 
     await client.close()
@@ -162,7 +164,9 @@ def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
     fake_module = types.ModuleType("env_settings")
     fake_module.BaseSettings = FakeBaseSettings  # type: ignore[attr-defined]
-    fake_module.load_settings = lambda *args, **kwargs: FakeBaseSettings.load(*args, **kwargs)
+    fake_module.load_settings = lambda *args, **kwargs: FakeBaseSettings.load(
+        *args, **kwargs
+    )
 
     monkeypatch.setitem(sys.modules, "env_settings", fake_module)
     import service_toolkit.nats as nats_module

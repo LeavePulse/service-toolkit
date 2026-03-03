@@ -97,11 +97,12 @@ def setup_tracing(
         return None
 
     endpoint = (
-        str(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")).strip()
-        or "http://tempo:4317"
+        str(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")).strip() or "http://tempo:4317"
     )
     headers = _parse_otel_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS"))
-    sample_ratio = max(0.0, min(1.0, _env_float("OTEL_TRACES_SAMPLER_ARG", default=1.0)))
+    sample_ratio = max(
+        0.0, min(1.0, _env_float("OTEL_TRACES_SAMPLER_ARG", default=1.0))
+    )
 
     insecure_env = os.getenv("OTEL_EXPORTER_OTLP_INSECURE")
     if insecure_env is None:

@@ -87,6 +87,7 @@ class SnowflakeGenerator:
                 | self._sequence
             )
 
+
 class _Registry:
     lock: Final[threading.Lock] = threading.Lock()
     instance: Optional[SnowflakeGenerator] = None

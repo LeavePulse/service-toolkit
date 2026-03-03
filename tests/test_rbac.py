@@ -14,6 +14,10 @@ def test_bits_from_codes_ignores_unknown():
 
 
 def test_codes_from_bits_sorted_by_bit():
-    bits = (1 << PROJECT_PERM_BITS["bot.manage"]) | (1 << PROJECT_PERM_BITS["project.audit.view"])
-    assert codes_from_bits(bits, PROJECT_PERM_BITS) == ["project.audit.view", "bot.manage"]
-
+    bits = (1 << PROJECT_PERM_BITS["bot.manage"]) | (
+        1 << PROJECT_PERM_BITS["project.audit.view"]
+    )
+    assert codes_from_bits(bits, PROJECT_PERM_BITS) == [
+        "project.audit.view",
+        "bot.manage",
+    ]
