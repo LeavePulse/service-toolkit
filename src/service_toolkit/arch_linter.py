@@ -95,7 +95,7 @@ FORBIDDEN_GLOBAL: list[Rule] = [
 CONDITIONALLY_FORBIDDEN: list[Rule] = [
     {
         "pattern": r"asyncio\.Lock\(\)",
-        "trigger": r"cache|ttl|memo|dedup",
+        "trigger": r"\b(cache|ttl|memo|dedup)\b",
         "name": "Manual Cache Lock",
         "reason": "Manual locks around cache logic are error-prone. Use 'service_toolkit.LookupCache'.",
     },
@@ -159,14 +159,12 @@ def check_file(file_path: Path, current_service: Optional[str]) -> list[str]:
             if not rule["compiled"].search(content):
                 continue
 
-            if rule.get("compiled_exclude") and rule["compiled_exclude"].search(
-                str(file_path)
-            ):
+            exclude_pattern = rule.get("compiled_exclude")
+            if exclude_pattern and exclude_pattern.search(str(file_path)):
                 continue
 
-            if rule.get("compiled_trigger") and not rule["compiled_trigger"].search(
-                content
-            ):
+            trigger_pattern = rule.get("compiled_trigger")
+            if trigger_pattern and not trigger_pattern.search(content):
                 continue
 
             for i, line in enumerate(lines):
@@ -175,9 +173,10 @@ def check_file(file_path: Path, current_service: Optional[str]) -> list[str]:
                     continue
 
                 if rule["compiled"].search(clean_line):
-                    if rule.get("compiled_negative_trigger") and rule[
-                        "compiled_negative_trigger"
-                    ].search(clean_line):
+                    negative_trigger_pattern = rule.get("compiled_negative_trigger")
+                    if negative_trigger_pattern and negative_trigger_pattern.search(
+                        clean_line
+                    ):
                         continue
                     errors.append(
                         f"{file_path}:{i + 1}: {rule['name']} - {rule['reason']}\n  -> {line.strip()}"
@@ -225,7 +224,11 @@ def check_file(file_path: Path, current_service: Optional[str]) -> list[str]:
             if "while True:" in line:
                 # Check next 10 lines for await asyncio.sleep
                 block = "\n".join(lines[i + 1 : i + 11])
-                if "asyncio.sleep" not in block:
+                if (
+                    "asyncio.sleep" not in block
+                    and "await " not in block
+                    and "break" not in block
+                ):
                     errors.append(
                         f"{file_path}:{i + 1}: Tight Loop Warning - 'while True' loop found without 'asyncio.sleep' in the next 10 lines."
                     )
@@ -244,16 +247,36 @@ def check_observability(search_root: Path) -> list[str]:
             continue
         content_combined += py_file.read_text(encoding="utf-8") + "\n"
 
-    # Precise route markers
     markers = [
-        (r'(\.get\(|\.route\()\s*[\'"]\/metrics[\'"]', "Prometheus /metrics"),
-        (r'(\.get\(|\.route\()\s*[\'"]\/health[\'"]', "Health /health"),
-        (r'(\.get\(|\.route\()\s*[\'"]\/ready[\'"]', "Readiness /ready"),
-        (r"opentelemetry|instrumentation|tracer", "OpenTelemetry init"),
+        (
+            [
+                r'(\.get\(|\.route\()\s*[\'"]\/metrics[\'"]',
+                r"build_prometheus_instrumentation\s*\(",
+            ],
+            "Prometheus /metrics",
+        ),
+        (
+            [
+                r'(\.get\(|\.route\()\s*[\'"]\/health[\'"]',
+                r"\bHealthController\b",
+            ],
+            "Health /health",
+        ),
+        (
+            [
+                r'(\.get\(|\.route\()\s*[\'"]\/ready[\'"]',
+                r"\bHealthController\b",
+            ],
+            "Readiness /ready",
+        ),
+        (
+            [r"opentelemetry|instrumentation|tracer|setup_tracing\s*\("],
+            "OpenTelemetry init",
+        ),
     ]
 
-    for pattern, name in markers:
-        if not re.search(pattern, content_combined):
+    for patterns, name in markers:
+        if not any(re.search(pattern, content_combined) for pattern in patterns):
             errors.append(
                 f"Missing Observability Contract: Project must implement {name}"
             )

@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import sys
 
+from .async_singleton import AsyncSingleton
 from .health import HealthController
+from .http import build_shared_async_client, close_shared_async_clients
 from .logging import (
     RequestContextLoggingMiddleware,
     bind_log_user_id,
@@ -28,6 +30,7 @@ from .rate_limit import (
 )
 
 __all__ = [
+    "AsyncSingleton",
     "CacheMode",
     "HealthController",
     "LookupCache",
@@ -36,8 +39,10 @@ __all__ = [
     "RedisFailureMode",
     "bind_log_user_id",
     "build_prometheus_instrumentation",
+    "build_shared_async_client",
     "build_standard_logging_config",
     "build_event",
+    "close_shared_async_clients",
     "enforce_request_rate_limit",
     "rate_limited_request",
     "DEFAULT_NATS_URL",
