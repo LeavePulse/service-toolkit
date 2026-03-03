@@ -34,6 +34,11 @@ tracing = [
     "opentelemetry-instrumentation-sqlalchemy>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-redis>=0.49b0,<1.0.0",
 ]
+
+[project.scripts]
+lp-arch-lint = "service_toolkit.arch_linter:main"
+lp-smoke-test = "service_toolkit.smoke_tester:main"
+
 [dependency-groups]
 dev = [
     "nats-py>=2.6.0,<3",
