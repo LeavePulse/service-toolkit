@@ -10,7 +10,11 @@ Requires: `service-toolkit[auth]`.
 from service_toolkit.auth.jwks import JWKSCache
 from service_toolkit.auth.schemas import JWTPayload
 from service_toolkit.auth.types import AuthUser, build_user
-from service_toolkit.auth.verifier import JWTVerificationError, JWTVerifier
+from service_toolkit.auth.verifier import (
+    JWTVerificationError,
+    JWTVerifier,
+    build_shared_jwt_verifier,
+)
 
 __all__ = [
     "AuthUser",
@@ -18,5 +22,6 @@ __all__ = [
     "JWTPayload",
     "JWTVerificationError",
     "JWTVerifier",
+    "build_shared_jwt_verifier",
     "build_user",
 ]

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from service_toolkit.async_lookup_cache import AsyncLookupCache
+from service_toolkit.cache import CacheMode, LookupCache
 
 
 @pytest.mark.asyncio
@@ -16,7 +16,10 @@ async def test_returns_cached_values_without_reloading() -> None:
         calls += 1
         return "ok"
 
-    cache = AsyncLookupCache[str, str](success_ttl_seconds=10.0)
+    cache = LookupCache[str, str](
+        mode=CacheMode.LOCAL,
+        local_ttl_seconds=10.0,
+    )
     first = await cache.get("key", loader)
     second = await cache.get("key", loader)
 
@@ -36,7 +39,10 @@ async def test_deduplicates_inflight_loads() -> None:
         await gate.wait()
         return "shared"
 
-    cache = AsyncLookupCache[str, str](success_ttl_seconds=10.0)
+    cache = LookupCache[str, str](
+        mode=CacheMode.LOCAL,
+        local_ttl_seconds=10.0,
+    )
 
     first_task = asyncio.create_task(cache.get("same", loader))
     second_task = asyncio.create_task(cache.get("same", loader))
@@ -65,8 +71,9 @@ async def test_enforces_max_concurrency_across_keys() -> None:
         concurrent -= 1
         return "value"
 
-    cache = AsyncLookupCache[str, str](
-        success_ttl_seconds=10.0,
+    cache = LookupCache[str, str](
+        mode=CacheMode.LOCAL,
+        local_ttl_seconds=10.0,
         max_concurrency=1,
     )
     await asyncio.gather(
@@ -86,8 +93,9 @@ async def test_caches_empty_results_with_dedicated_ttl() -> None:
         calls += 1
         return ""
 
-    cache = AsyncLookupCache[str, str](
-        success_ttl_seconds=10.0,
+    cache = LookupCache[str, str](
+        mode=CacheMode.LOCAL,
+        local_ttl_seconds=10.0,
         empty_ttl_seconds=0.05,
         is_empty=lambda value: value == "",
     )

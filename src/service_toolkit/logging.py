@@ -58,7 +58,7 @@ def _extract_trace_id(scope: Scope) -> str | None:
 
 def _current_otel_trace_id() -> str | None:
     try:
-        from opentelemetry import trace
+        from opentelemetry import trace  # type: ignore[import-not-found]
     except ModuleNotFoundError:
         return None
 

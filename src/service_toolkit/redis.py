@@ -5,7 +5,6 @@ This module intentionally stays small and explicit:
 - Client lifecycle (`RedisClient`)
 - Key namespacing (`Keyspace`)
 - Distributed locks (`RedisLock`)
-- Lightweight JSON caching helpers (`RedisCache`)
 
 All Redis functionality is optional and requires the `redis` extra:
 `pip install service-toolkit[redis]`.
@@ -15,17 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import os
 import random
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any
 from urllib.parse import quote
-
-T = TypeVar("T")
 
 DEFAULT_REDIS_HOST = "127.0.0.1"
 DEFAULT_REDIS_PORT = 6379
@@ -116,14 +112,17 @@ class RedisSettings:
         across services, but falls back to simple environment parsing.
         """
 
+        base_settings_cls: type[Any] | None
         try:
             from env_settings import BaseSettings as _BaseSettings  # type: ignore
         except ModuleNotFoundError:  # pragma: no cover - optional dependency
-            _BaseSettings = None
+            base_settings_cls = None
+        else:
+            base_settings_cls = _BaseSettings
 
-        if _BaseSettings is not None:
+        if base_settings_cls is not None:
 
-            class _RedisConfig(_BaseSettings):  # type: ignore[misc]
+            class _RedisConfig(base_settings_cls):  # type: ignore[misc, valid-type]
                 url: str | None = None
                 host: str = DEFAULT_REDIS_HOST
                 port: int = DEFAULT_REDIS_PORT
@@ -464,132 +463,12 @@ class LeaderLease:
             return
 
 
-class RedisCache(Generic[T]):
-    """Lightweight JSON cache wrapper."""
-
-    def __init__(
-        self,
-        client: Any,
-        *,
-        keyspace: Keyspace,
-        default_ttl_seconds: int = 300,
-        ttl_jitter_ratio: float = 0.0,
-        ttl_jitter_max_seconds: int | None = None,
-    ):
-        self._client = client
-        self._keyspace = keyspace
-        self._default_ttl_seconds = default_ttl_seconds
-        self._ttl_jitter_ratio = ttl_jitter_ratio
-        self._ttl_jitter_max_seconds = ttl_jitter_max_seconds
-
-        msgspec_json: Any | None
-        try:  # pragma: no cover - optional
-            import msgspec.json as msgspec_json  # type: ignore[import-not-found]
-        except ModuleNotFoundError:
-            msgspec_json = None
-        self._msgspec_json = msgspec_json
-
-    def _full_key(self, key: str) -> str:
-        return self._keyspace.key(key)
-
-    def _encode_json(self, value: Any) -> bytes:
-        if self._msgspec_json is not None:
-            return self._msgspec_json.encode(value)
-        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode(
-            "utf-8"
-        )
-
-    def _decode_json(self, data: bytes, *, type: Any | None = None) -> Any:
-        if self._msgspec_json is not None:
-            if type is None:
-                return self._msgspec_json.decode(data)
-            return self._msgspec_json.decode(data, type=type)
-        decoded = json.loads(data.decode("utf-8"))
-        return decoded
-
-    def _effective_ttl(self, ttl_seconds: int | None) -> int:
-        ttl = self._default_ttl_seconds if ttl_seconds is None else int(ttl_seconds)
-        if self._ttl_jitter_ratio > 0:
-            ttl = ttl_with_jitter(
-                ttl,
-                ratio=self._ttl_jitter_ratio,
-                max_jitter_seconds=self._ttl_jitter_max_seconds,
-            )
-        return ttl
-
-    async def get_bytes(self, key: str) -> bytes | None:
-        return await self._client.get(self._full_key(key))
-
-    async def set_bytes(
-        self, key: str, value: bytes, *, ttl_seconds: int | None = None
-    ) -> bool:
-        ttl = self._effective_ttl(ttl_seconds)
-        result = await self._client.set(self._full_key(key), value, ex=ttl)
-        return bool(result)
-
-    async def delete(self, key: str) -> int:
-        return int(await self._client.delete(self._full_key(key)))
-
-    async def get_json(self, key: str, *, type: Any | None = None) -> Any | None:
-        data = await self.get_bytes(key)
-        if data is None:
-            return None
-        return self._decode_json(data, type=type)
-
-    async def set_json(
-        self, key: str, value: Any, *, ttl_seconds: int | None = None
-    ) -> bool:
-        return await self.set_bytes(
-            key, self._encode_json(value), ttl_seconds=ttl_seconds
-        )
-
-    async def get_or_set_json(
-        self,
-        key: str,
-        producer: Callable[[], Awaitable[Any]],
-        *,
-        ttl_seconds: int | None = None,
-        lock_ttl_seconds: float = 10.0,
-        wait_timeout_seconds: float = 2.0,
-    ) -> Any:
-        cached = await self.get_json(key)
-        if cached is not None:
-            return cached
-
-        lock_key = self._keyspace.key(f"{key}:lock")
-        lock = RedisLock(self._client, lock_key, ttl_seconds=lock_ttl_seconds)
-        if await lock.acquire():
-            try:
-                cached = await self.get_json(key)
-                if cached is not None:
-                    return cached
-                value = await producer()
-                await self.set_json(key, value, ttl_seconds=ttl_seconds)
-                return value
-            finally:
-                await lock.release()
-
-        # Another worker is computing. Wait briefly for the value to appear.
-        deadline = time.monotonic() + max(0.0, wait_timeout_seconds)
-        delay = 0.05
-        while time.monotonic() < deadline:
-            await asyncio.sleep(delay)
-            cached = await self.get_json(key)
-            if cached is not None:
-                return cached
-            delay = min(0.5, delay * 1.5)
-
-        # Fallback: compute without lock to avoid indefinite waiting.
-        return await producer()
-
-
 __all__ = [
     "DEFAULT_REDIS_DB",
     "DEFAULT_REDIS_HOST",
     "DEFAULT_REDIS_PORT",
     "Keyspace",
     "LeaderLease",
-    "RedisCache",
     "RedisClient",
     "RedisLock",
     "RedisSettings",
