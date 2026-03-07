@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
 from litestar import status_codes
 from litestar.exceptions import HTTPException
 
+from .request_ip import resolve_client_ip
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -116,8 +118,8 @@ def _hash_subject(subject: str, *, secret: str | bytes | None = None) -> str:
 
 
 def _default_subject_resolver(request: Request) -> str:
-    if request.client and request.client.host:
-        return request.client.host
+    if client_ip := resolve_client_ip(request):
+        return client_ip
     return _FALLBACK_SUBJECT
 
 

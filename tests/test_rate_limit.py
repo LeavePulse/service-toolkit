@@ -52,9 +52,15 @@ class FakeClient:
 
 
 class FakeRequest:
-    def __init__(self, host: str = "127.0.0.1", store: object | None = None) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        store: object | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.client = FakeClient(host)
         self.app = FakeApp(store)
+        self.headers = headers or {}
 
 
 @pytest.mark.asyncio
@@ -128,6 +134,42 @@ async def test_enforce_request_rate_limit_local_fallback_uses_subject_hash() -> 
             hash_secret="pepper",
         )
     assert exc.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_enforce_request_rate_limit_uses_forwarded_client_ip() -> None:
+    store = FakeRedisStore()
+    request_a = cast(
+        Any,
+        FakeRequest(
+            host="172.19.0.1",
+            store=store,
+            headers={"x-forwarded-for": "198.51.100.10"},
+        ),
+    )
+    request_b = cast(
+        Any,
+        FakeRequest(
+            host="172.19.0.1",
+            store=store,
+            headers={"x-forwarded-for": "198.51.100.11"},
+        ),
+    )
+
+    await enforce_request_rate_limit(
+        request_a,
+        bucket="auth:refresh:forwarded-ip",
+        limit=1,
+        window_seconds=60,
+        hash_subject=False,
+    )
+    await enforce_request_rate_limit(
+        request_b,
+        bucket="auth:refresh:forwarded-ip",
+        limit=1,
+        window_seconds=60,
+        hash_subject=False,
+    )
 
 
 @pytest.mark.asyncio

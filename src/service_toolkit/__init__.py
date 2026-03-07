@@ -28,6 +28,7 @@ from .rate_limit import (
     enforce_request_rate_limit,
     rate_limited_request,
 )
+from .request_ip import resolve_client_ip
 
 __all__ = [
     "AsyncSingleton",
@@ -45,6 +46,7 @@ __all__ = [
     "close_shared_async_clients",
     "enforce_request_rate_limit",
     "rate_limited_request",
+    "resolve_client_ip",
     "DEFAULT_NATS_URL",
     "DEFAULT_EPOCH_MS",
     "DEFAULT_REDIS_DB",
