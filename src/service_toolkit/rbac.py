@@ -12,6 +12,14 @@ from collections.abc import Iterable, Mapping
 
 PLATFORM_PERMS_VERSION = 2
 PROJECT_PERMS_VERSION = 1
+PROJECT_SCOPE_PROJECT = "project"
+PROJECT_SCOPE_SERVER = "server"
+PROJECT_SCOPE_WHITELIST_POLICY = "whitelist_policy"
+PROJECT_PERMISSION_SCOPE_TYPES = (
+    PROJECT_SCOPE_PROJECT,
+    PROJECT_SCOPE_SERVER,
+    PROJECT_SCOPE_WHITELIST_POLICY,
+)
 
 # Platform-scoped permissions (auth-service).
 PLATFORM_PERM_BITS: dict[str, int] = {
