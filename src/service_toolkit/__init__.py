@@ -48,6 +48,15 @@ __all__ = [
     "rate_limited_request",
     "resolve_client_ip",
     "DEFAULT_NATS_URL",
+    "AuthSettings",
+    "DatabaseSettings",
+    "DBConfig",
+    "DEFAULT_JWT_EXCLUDE",
+    "InternalSettings",
+    "JWTAuthMiddleware",
+    "RedisCoordinationSettings",
+    "build_db_config",
+    "create_service_app",
     "DEFAULT_EPOCH_MS",
     "DEFAULT_REDIS_DB",
     "DEFAULT_REDIS_HOST",
@@ -71,6 +80,15 @@ __all__ = [
 ]
 
 _OPTIONAL_EXPORTS = {
+    "AuthSettings",
+    "DatabaseSettings",
+    "DBConfig",
+    "DEFAULT_JWT_EXCLUDE",
+    "InternalSettings",
+    "JWTAuthMiddleware",
+    "RedisCoordinationSettings",
+    "build_db_config",
+    "create_service_app",
     "DEFAULT_NATS_URL",
     "NATSClient",
     "NATSSettings",
@@ -89,6 +107,15 @@ _OPTIONAL_EXPORTS = {
 }
 
 _OPTIONAL_EXPORT_MODULES = {
+    "AuthSettings": ".config",
+    "DatabaseSettings": ".config",
+    "DBConfig": ".db.litestar",
+    "DEFAULT_JWT_EXCLUDE": ".app_factory",
+    "InternalSettings": ".config",
+    "JWTAuthMiddleware": ".middleware",
+    "RedisCoordinationSettings": ".config",
+    "build_db_config": ".db.litestar",
+    "create_service_app": ".app_factory",
     "DEFAULT_NATS_URL": ".nats",
     "NATSClient": ".nats",
     "NATSSettings": ".nats",
@@ -115,6 +142,16 @@ def __getattr__(name: str):
         module_name = _OPTIONAL_EXPORT_MODULES.get(name, ".nats")
         module = importlib.import_module(module_name, __name__)
     except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
+        if exc.name == "env_settings":
+            raise ModuleNotFoundError(
+                "Config helpers require the optional 'env' extra. "
+                "Install with 'pip install service-toolkit[env]'."
+            ) from exc
+        if exc.name == "advanced_alchemy":
+            raise ModuleNotFoundError(
+                "DB config helpers require the optional 'sqlalchemy' extra. "
+                "Install with 'pip install service-toolkit[sqlalchemy]'."
+            ) from exc
         if exc.name == "nats":
             raise ModuleNotFoundError(
                 "NATS helpers require the optional 'nats' extra. "
