@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from service_toolkit.async_singleton import AsyncSingleton
+from service_toolkit.state.async_singleton import AsyncSingleton
 
 
 @pytest.mark.asyncio

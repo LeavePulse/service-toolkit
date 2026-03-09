@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from service_toolkit.cache import CacheMode, LookupCache
+from service_toolkit.state.cache import CacheMode, LookupCache
 
 
 @pytest.mark.asyncio

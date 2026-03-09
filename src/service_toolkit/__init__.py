@@ -5,30 +5,30 @@ from __future__ import annotations
 import importlib
 import sys
 
-from .async_singleton import AsyncSingleton
-from .health import HealthController
-from .http import build_shared_async_client, close_shared_async_clients
-from .logging import (
+from .observability.logging import (
     RequestContextLoggingMiddleware,
     bind_log_user_id,
     build_standard_logging_config,
 )
-from .cache import CacheMode, LookupCache, RedisFailureMode
-from .prometheus import build_prometheus_instrumentation
-from .snowflake import (
+from .observability.prometheus import build_prometheus_instrumentation
+from .ids.snowflake import (
     DEFAULT_EPOCH_MS,
     SnowflakeGenerator,
     configure_default_generator,
     generate_id,
     reset_default_generator,
 )
-from .events import build_event, utc_now_iso
-from .rate_limit import (
+from .messaging.events import build_event, utc_now_iso
+from .state.async_singleton import AsyncSingleton
+from .state.cache import CacheMode, LookupCache, RedisFailureMode
+from .web.health import HealthController
+from .web.http import build_shared_async_client, close_shared_async_clients
+from .web.rate_limit import (
     RateLimitFailureMode,
     enforce_request_rate_limit,
     rate_limited_request,
 )
-from .request_ip import resolve_client_ip
+from .web.request_ip import resolve_client_ip
 
 __all__ = [
     "AsyncSingleton",
@@ -107,30 +107,30 @@ _OPTIONAL_EXPORTS = {
 }
 
 _OPTIONAL_EXPORT_MODULES = {
-    "AuthSettings": ".config",
-    "DatabaseSettings": ".config",
+    "AuthSettings": ".settings.config",
+    "DatabaseSettings": ".settings.config",
     "DBConfig": ".db.litestar",
-    "DEFAULT_JWT_EXCLUDE": ".app_factory",
-    "InternalSettings": ".config",
-    "JWTAuthMiddleware": ".middleware",
-    "RedisCoordinationSettings": ".config",
+    "DEFAULT_JWT_EXCLUDE": ".web.app_factory",
+    "InternalSettings": ".settings.config",
+    "JWTAuthMiddleware": ".web.middleware",
+    "RedisCoordinationSettings": ".settings.config",
     "build_db_config": ".db.litestar",
-    "create_service_app": ".app_factory",
-    "DEFAULT_NATS_URL": ".nats",
-    "NATSClient": ".nats",
-    "NATSSettings": ".nats",
-    "DEFAULT_REDIS_DB": ".redis",
-    "DEFAULT_REDIS_HOST": ".redis",
-    "DEFAULT_REDIS_PORT": ".redis",
-    "Keyspace": ".redis",
-    "LeaderElectedListener": ".leader_elected_listener",
-    "LeaderLease": ".redis",
-    "RedisClient": ".redis",
-    "RedisLock": ".redis",
-    "RedisReplicaStore": ".snapshot_store",
-    "RedisSettings": ".redis",
-    "setup_tracing": ".tracing",
-    "ttl_with_jitter": ".redis",
+    "create_service_app": ".web.app_factory",
+    "DEFAULT_NATS_URL": ".messaging.nats",
+    "NATSClient": ".messaging.nats",
+    "NATSSettings": ".messaging.nats",
+    "DEFAULT_REDIS_DB": ".state.redis",
+    "DEFAULT_REDIS_HOST": ".state.redis",
+    "DEFAULT_REDIS_PORT": ".state.redis",
+    "Keyspace": ".state.redis",
+    "LeaderElectedListener": ".messaging.leader_elected_listener",
+    "LeaderLease": ".state.redis",
+    "RedisClient": ".state.redis",
+    "RedisLock": ".state.redis",
+    "RedisReplicaStore": ".state.snapshot_store",
+    "RedisSettings": ".state.redis",
+    "setup_tracing": ".observability.tracing",
+    "ttl_with_jitter": ".state.redis",
 }
 
 

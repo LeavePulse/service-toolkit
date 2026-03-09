@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from service_toolkit.request_ip import resolve_client_ip
+from service_toolkit.web.request_ip import resolve_client_ip
 
 
 class FakeClient:

@@ -22,10 +22,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
-from advanced_alchemy.config.asyncio import AsyncSessionConfig
-from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
+from advanced_alchemy.config.asyncio import AsyncSessionConfig  # type: ignore[import-not-found]
+from advanced_alchemy.extensions.litestar import (  # type: ignore[import-not-found]
+    SQLAlchemyAsyncConfig,
+)
 from advanced_alchemy.extensions.litestar.plugins.init.config.engine import (
-    EngineConfig,
+    EngineConfig,  # type: ignore[import-not-found]
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 

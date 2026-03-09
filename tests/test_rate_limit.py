@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 from litestar.exceptions import HTTPException
 
-from service_toolkit.rate_limit import (
+from service_toolkit.web.rate_limit import (
     RateLimitFailureMode,
     enforce_request_rate_limit,
     rate_limited_request,

@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from service_toolkit.cache import CacheMode, LookupCache, RedisFailureMode
-from service_toolkit.redis import (
+from service_toolkit.state.cache import CacheMode, LookupCache, RedisFailureMode
+from service_toolkit.state.redis import (
     Keyspace,
     LeaderLease,
     RedisLock,
@@ -71,7 +71,7 @@ def test_keyspace_normalizes_separators() -> None:
 
 
 def test_ttl_with_jitter_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("service_toolkit.redis.random.uniform", lambda a, b: b)
+    monkeypatch.setattr("service_toolkit.state.redis.random.uniform", lambda a, b: b)
     assert ttl_with_jitter(100, ratio=0.1) == 90
     assert ttl_with_jitter(1, ratio=0.9) == 1
     assert ttl_with_jitter(0, ratio=0.5) == 0

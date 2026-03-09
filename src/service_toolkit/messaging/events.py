@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from .snowflake import generate_id
+from ..ids.snowflake import generate_id
 
 
 def utc_now_iso() -> str:

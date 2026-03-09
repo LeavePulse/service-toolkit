@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from service_toolkit.http import build_shared_async_client, close_shared_async_clients
+from service_toolkit.web.http import build_shared_async_client, close_shared_async_clients
 
 
 @pytest.mark.asyncio

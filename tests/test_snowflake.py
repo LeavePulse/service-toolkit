@@ -2,7 +2,7 @@
 
 import pytest
 
-from service_toolkit import snowflake
+import service_toolkit.ids.snowflake as snowflake
 
 
 def test_configure_default_generator_sets_new_instance() -> None:

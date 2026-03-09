@@ -25,7 +25,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 ## Usage
 
 ```python
-from service_toolkit.prometheus import build_prometheus_instrumentation
+from service_toolkit.observability.prometheus import build_prometheus_instrumentation
 
 PrometheusMiddleware, metrics_endpoint = build_prometheus_instrumentation(
     service_name="auth_service",
@@ -40,7 +40,7 @@ app = Litestar(
 
 ```python
 from litestar.middleware.base import DefineMiddleware
-from service_toolkit.logging import RequestContextLoggingMiddleware
+from service_toolkit.observability.logging import RequestContextLoggingMiddleware
 
 app = Litestar(
     middleware=[DefineMiddleware(RequestContextLoggingMiddleware), ...],
@@ -58,7 +58,7 @@ install_slow_query_logging(
 
 ```python
 from litestar.middleware.base import DefineMiddleware
-from service_toolkit.tracing import setup_tracing
+from service_toolkit.observability.tracing import setup_tracing
 
 OpenTelemetryMiddleware = setup_tracing(service_name="server-service")
 
@@ -77,7 +77,7 @@ if OpenTelemetryMiddleware is not None:
 - `OTEL_INSTRUMENT_HTTPX`, `OTEL_INSTRUMENT_SQLALCHEMY`, `OTEL_INSTRUMENT_REDIS` (bool, default `true`)
 
 ```python
-from service_toolkit.nats import NATSClient, NATSSettings
+from service_toolkit.messaging.nats import NATSClient, NATSSettings
 
 settings = NATSSettings.from_env()
 
@@ -88,7 +88,7 @@ async def publish_user_created(event: dict[str, object]) -> None:
 ```
 
 ```python
-from service_toolkit.rate_limit import rate_limited_request
+from service_toolkit.web.rate_limit import rate_limited_request
 
 
 @rate_limited_request(bucket="auth:login", limit=20, window_seconds=60)
@@ -117,7 +117,7 @@ an atomic Redis fixed window. When Redis is unavailable, the helper follows
 
 ```python
 from service_toolkit import CacheMode, LookupCache, RedisFailureMode
-from service_toolkit.redis import Keyspace
+from service_toolkit.state.redis import Keyspace
 
 dns_cache = LookupCache[str, list[str]](
     mode=CacheMode.HYBRID,
@@ -140,7 +140,7 @@ parameter construction.
 
 ```python
 from service_toolkit import CacheMode, LookupCache, RedisFailureMode
-from service_toolkit.redis import Keyspace, RedisClient, RedisSettings
+from service_toolkit.state.redis import Keyspace, RedisClient, RedisSettings
 
 settings = RedisSettings.from_env(prefix="REDIS_")
 

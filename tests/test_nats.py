@@ -7,12 +7,12 @@ import os
 import sys
 import types
 from types import SimpleNamespace
-from typing import Mapping
+from typing import Any, Mapping, cast
 
 import pytest
 
-from service_toolkit import nats as nats_helpers
-from service_toolkit.nats import NATSClient, NATSSettings
+import service_toolkit.messaging.nats as nats_helpers
+from service_toolkit.messaging.nats import NATSClient, NATSSettings
 
 
 class DummyConnection:
@@ -137,7 +137,7 @@ def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         ) -> "FakeBaseSettings":
             env = env or {}
             prefix = prefix or ""
-            data: dict[str, str] = {}
+            data: dict[str, object] = {}
             for key, value in env.items():
                 if prefix and key.startswith(prefix):
                     field = key[len(prefix) :]
@@ -163,13 +163,14 @@ def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
             return cls(**data)
 
     fake_module = types.ModuleType("env_settings")
-    fake_module.BaseSettings = FakeBaseSettings  # type: ignore[attr-defined]
-    fake_module.load_settings = lambda *args, **kwargs: FakeBaseSettings.load(
+    fake_module_any = cast("Any", fake_module)
+    fake_module_any.BaseSettings = FakeBaseSettings
+    fake_module_any.load_settings = lambda *args, **kwargs: FakeBaseSettings.load(
         *args, **kwargs
     )
 
     monkeypatch.setitem(sys.modules, "env_settings", fake_module)
-    import service_toolkit.nats as nats_module
+    import service_toolkit.messaging.nats as nats_module
 
     importlib.reload(nats_module)
 

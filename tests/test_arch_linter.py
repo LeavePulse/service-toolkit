@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from service_toolkit.arch_linter import check_file, check_observability
+from service_toolkit.dev.arch_linter import check_file, check_observability
 
 
 def test_check_observability_accepts_toolkit_health_and_prometheus(
@@ -12,8 +12,8 @@ def test_check_observability_accepts_toolkit_health_and_prometheus(
         "\n".join(
             [
                 "from service_toolkit import HealthController",
-                "from service_toolkit.prometheus import build_prometheus_instrumentation",
-                "from service_toolkit.tracing import setup_tracing",
+                "from service_toolkit.observability.prometheus import build_prometheus_instrumentation",
+                "from service_toolkit.observability.tracing import setup_tracing",
                 "PrometheusMiddleware, metrics_endpoint = build_prometheus_instrumentation(service_name='x')",
                 "OpenTelemetryMiddleware = setup_tracing(service_name='x')",
                 "route_handlers = [HealthController, metrics_endpoint]",

@@ -4,7 +4,7 @@ Replaces the duplicated ``middleware/authz.py`` found in most services.
 
 Usage::
 
-    from service_toolkit.middleware import JWTAuthMiddleware
+    from service_toolkit.web.middleware import JWTAuthMiddleware
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from litestar.middleware.authentication import (
     AuthenticationResult,
 )
 
-from .auth import JWTVerificationError, build_user
-from .logging import bind_log_user_id
+from ..auth import JWTVerificationError, build_user
+from ..observability.logging import bind_log_user_id
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
     from litestar.types import Method
 
-    from .auth import JWTVerifier
+    from ..auth import JWTVerifier
 
 
 class JWTAuthMiddleware(AbstractAuthenticationMiddleware):

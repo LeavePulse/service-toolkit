@@ -5,7 +5,7 @@ from litestar.middleware.base import DefineMiddleware
 from litestar.testing import TestClient
 from prometheus_client import Gauge
 
-from service_toolkit.prometheus import build_prometheus_instrumentation
+from service_toolkit.observability.prometheus import build_prometheus_instrumentation
 
 
 def test_prometheus_instrumentation_exposes_metrics() -> None:

@@ -14,9 +14,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..ids.snowflake import generate_id
 from .events import build_event
 from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
-from .snowflake import generate_id
 
 if TYPE_CHECKING:  # pragma: no cover
     pass

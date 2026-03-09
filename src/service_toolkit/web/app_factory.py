@@ -4,7 +4,7 @@ Eliminates the duplicated boilerplate found in every service ``main.py``.
 
 Usage::
 
-    from service_toolkit.app_factory import create_service_app
+    from service_toolkit.web.app_factory import create_service_app
 
     app = create_service_app(
         service_name=settings.service_name,
@@ -27,7 +27,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from awesome_errors import ErrorResponseFormat
 from litestar import Litestar
@@ -36,29 +36,30 @@ from litestar.middleware.base import DefineMiddleware
 from litestar.openapi.config import OpenAPIConfig
 from litestar.openapi.spec import Components, SecurityScheme
 
-from .awesome_errors import (
+from ..errors.awesome_errors import (
     apply_problem_details,
     build_error_translator_with_defaults,
     build_standard_exception_handlers,
 )
 from .cors import resolve_cors_origins
 from .health import HealthController
-from .logging import build_standard_logging_config, request_context_middleware
+from ..observability.logging import (
+    build_standard_logging_config,
+    request_context_middleware,
+)
 from .openapi import default_openapi_render_plugins
-from .prometheus import build_prometheus_instrumentation
+from ..observability.prometheus import build_prometheus_instrumentation
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
     from litestar.logging.config import BaseLoggingConfig
-    from litestar.types import (
-        ControllerRouterHandler,
-        ExceptionHandlersMap,
-        LifeSpanHandler,
-    )
+    from litestar.types import ControllerRouterHandler, ExceptionHandlersMap
 
-    from .config import AuthSettings
+    from ..settings.config import AuthSettings
+
+    LifeSpanHandler: TypeAlias = Callable[..., object]
 
 
 #: Default URL patterns excluded from JWT authentication.
@@ -132,7 +133,7 @@ def create_service_app(
     """
 
     # ── Tracing ──────────────────────────────────────────────────────
-    from .tracing import setup_tracing
+    from ..observability.tracing import setup_tracing
 
     otel_middleware = setup_tracing(
         service_name=service_name,
@@ -142,7 +143,7 @@ def create_service_app(
 
     # ── Slow-query logging ───────────────────────────────────────────
     if sqlalchemy_config is not None:
-        from .db import install_slow_query_logging
+        from ..db import install_slow_query_logging
 
         install_slow_query_logging(service_name=service_name)
 
@@ -170,7 +171,7 @@ def create_service_app(
     # ── JWT Verifier ─────────────────────────────────────────────────
     jwt_verifier = None
     if auth_settings is not None:
-        from .auth import build_shared_jwt_verifier
+        from ..auth import build_shared_jwt_verifier
 
         jwt_verifier = build_shared_jwt_verifier(
             jwks_url=auth_settings.resolved_jwks_url,
@@ -243,7 +244,7 @@ def create_service_app(
             allow_origins_debug=cors_allow_origins_debug,
         ),
         max_age=0 if debug else 86400,
-        allow_methods=list(cors_allow_methods),
+        allow_methods=cast("Any", list(cors_allow_methods)),
         allow_headers=["*"],
         allow_credentials=True,
     )

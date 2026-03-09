@@ -1,4 +1,4 @@
-from service_toolkit.rbac import (
+from service_toolkit.security.rbac import (
     PLATFORM_PERM_BITS,
     PROJECT_PERM_BITS,
     bits_from_codes,

@@ -8,8 +8,8 @@ import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from service_toolkit.nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
-from service_toolkit.redis import Keyspace, LeaderLease, RedisClient, RedisSettings
+from ..state.redis import Keyspace, LeaderLease, RedisClient, RedisSettings
+from .nats import DEFAULT_NATS_URL, NATSClient, NATSSettings
 
 if TYPE_CHECKING:
     from nats.aio.subscription import Subscription
