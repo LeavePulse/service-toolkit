@@ -25,6 +25,24 @@ def test_check_observability_accepts_toolkit_health_and_prometheus(
     assert check_observability(tmp_path) == []
 
 
+def test_check_observability_accepts_service_app_factory(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text(
+        "\n".join(
+            [
+                "from service_toolkit.web.app_factory import create_service_app",
+                "app = create_service_app(",
+                "    service_name='x',",
+                "    openapi_title='x',",
+                "    route_handlers=[],",
+                ")",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_observability(tmp_path) == []
+
+
 def test_check_file_ignores_non_cache_locks_and_waiting_loops(tmp_path: Path) -> None:
     file_path = tmp_path / "sample.py"
     file_path.write_text(

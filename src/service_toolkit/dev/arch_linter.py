@@ -247,6 +247,9 @@ def check_observability(search_root: Path) -> list[str]:
             continue
         content_combined += py_file.read_text(encoding="utf-8") + "\n"
 
+    if re.search(r"\bcreate_service_app\s*\(", content_combined):
+        return errors
+
     markers = [
         (
             [
