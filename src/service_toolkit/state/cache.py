@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable
 from enum import StrEnum
 from time import monotonic
 from typing import Any, Generic, TypeVar, cast
+
+import msgspec
 
 from .redis import Keyspace, RedisLock, ttl_with_jitter
 
@@ -31,11 +32,11 @@ class RedisFailureMode(StrEnum):
 
 
 def _default_encode(value: Any) -> bytes:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return msgspec.json.encode(value)
 
 
 def _default_decode(data: bytes) -> Any:
-    return json.loads(data.decode("utf-8"))
+    return msgspec.json.decode(data)
 
 
 def _ttl_with_jitter_seconds(
