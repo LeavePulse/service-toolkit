@@ -26,6 +26,8 @@ from prometheus_client import (
 )
 from prometheus_client import multiprocess
 
+from .prometheus_runtime import prepare_multiprocess_directory
+
 MiddlewareFactory = Callable[..., ASGIApp]
 
 
@@ -138,30 +140,6 @@ def build_prometheus_instrumentation(
     )
 
     return _prometheus_middleware, metrics_endpoint
-
-
-def prepare_multiprocess_directory(
-    directory: str | os.PathLike[str] | None = None,
-) -> Path | None:
-    """Create (and clean) the prometheus multiprocess directory.
-
-    Call this once in the parent process before spawning worker processes.
-    """
-
-    resolved_directory: str | os.PathLike[str] | None = directory
-    if resolved_directory is None:
-        resolved_directory = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
-            "prometheus_multiproc_dir"
-        )
-    if not resolved_directory:
-        return None
-    target = Path(resolved_directory)
-
-    target.mkdir(parents=True, exist_ok=True)
-    for item in target.iterdir():
-        if item.is_file():
-            item.unlink(missing_ok=True)
-    return target
 
 
 __all__ = ["build_prometheus_instrumentation", "prepare_multiprocess_directory"]

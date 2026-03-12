@@ -38,6 +38,7 @@ tracing = [
 
 [project.scripts]
 lp-arch-lint = "service_toolkit.dev.arch_linter:main"
+lp-prometheus-runtime = "service_toolkit.observability.prometheus_runtime:main"
 lp-smoke-test = "service_toolkit.dev.smoke_tester:main"
 
 [dependency-groups]

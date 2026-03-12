@@ -14,6 +14,7 @@ __all__ = [
     "get_log_context",
     "metric_label",
     "prepare_multiprocess_directory",
+    "prometheus_runtime",
     "request_context_middleware",
     "setup_tracing",
 ]
@@ -26,7 +27,7 @@ _EXPORT_MODULES = {
     "build_standard_logging_config": ".logging",
     "get_log_context": ".logging",
     "metric_label": ".metrics",
-    "prepare_multiprocess_directory": ".prometheus",
+    "prepare_multiprocess_directory": ".prometheus_runtime",
     "request_context_middleware": ".logging",
     "setup_tracing": ".tracing",
 }
@@ -34,6 +35,7 @@ _SUBMODULES = {
     "logging": ".logging",
     "metrics": ".metrics",
     "prometheus": ".prometheus",
+    "prometheus_runtime": ".prometheus_runtime",
     "tracing": ".tracing",
 }
 
