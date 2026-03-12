@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from litestar import Response, get
+from litestar.exceptions import HTTPException
 from litestar.types import (
     ASGIApp,
     ControllerRouterHandler,
@@ -121,6 +122,9 @@ def build_prometheus_instrumentation(
 
             try:
                 await self.app(scope, receive, send_wrapper)
+            except HTTPException as exc:
+                status_code = int(getattr(exc, "status_code", 500) or 500)
+                raise
             finally:
                 elapsed = time.perf_counter() - start
                 request_count.labels(
