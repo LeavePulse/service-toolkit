@@ -167,7 +167,7 @@ class LookupCache(Generic[K, V]):
         return len(self._inflight)
 
     async def get(self, key: K, loader: Callable[[], Awaitable[V]]) -> V:
-        cached = await self._get_local(key)
+        cached = self._peek_local(key)
         if cached is not _MISSING:
             return cast("V", cached)
 
@@ -193,7 +193,7 @@ class LookupCache(Generic[K, V]):
                         self._inflight.pop(key, None)
 
     async def get_cached(self, key: K) -> V | None:
-        cached = await self._get_local(key)
+        cached = self._peek_local(key)
         if cached is not _MISSING:
             return cast("V", cached)
 
@@ -315,6 +315,18 @@ class LookupCache(Generic[K, V]):
             return await loader()
         async with self._semaphore:
             return await loader()
+
+    def _peek_local(self, key: K) -> V | object:
+        """Lock-free L1 read. Safe in single-threaded asyncio."""
+        if not self.local_enabled:
+            return _MISSING
+        cached = self._cache.get(key)
+        if cached is None:
+            return _MISSING
+        value, expires_at = cached
+        if monotonic() >= expires_at:
+            return _MISSING
+        return value
 
     async def _get_local(self, key: K) -> V | object:
         async with self._lock:
