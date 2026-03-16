@@ -11,6 +11,7 @@ Notes:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -52,25 +53,29 @@ class GatewayCommandBus:
             return
 
         try:
-            nats_settings = NATSSettings.from_env(env_file=self._config.env_file)
+            env_file = os.environ.get("ENV_FILE", self._config.env_file)
+            nats_settings = NATSSettings.from_env(env_file=env_file)
             if not nats_settings.servers:
                 nats_settings.servers = (DEFAULT_NATS_URL,)
             if not nats_settings.name:
                 nats_settings.name = self._config.producer
 
-            self._client = NATSClient(nats_settings)
-            await self._client.connect()
-            await self._client.ensure_stream(
+            client = NATSClient(nats_settings)
+            await client.connect()
+            await client.ensure_stream(
                 self._config.stream_name,
                 [self._config.subject_cmd],
             )
+            self._client = client
             logger.info(
                 "Connected to NATS for gateway commands (servers=%s)",
                 ",".join(nats_settings.servers),
             )
-        except Exception as exc:  # pragma: no cover
-            self._client = None
-            logger.exception("Failed to initialize gateway command bus", exc_info=exc)
+        except Exception:  # pragma: no cover
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
+            logger.exception("Failed to initialize gateway command bus")
 
     async def stop(self) -> None:
         if self._client is None:

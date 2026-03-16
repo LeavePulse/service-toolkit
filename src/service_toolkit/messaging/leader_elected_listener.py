@@ -55,6 +55,7 @@ class LeaderElectedListener(ABC):
         self._lease: LeaderLease | None = None
         self._retry_task: asyncio.Task[None] | None = None
         self._stopping = False
+        self._started = False
 
     @abstractmethod
     def _get_lease_key(self) -> str:
@@ -109,11 +110,13 @@ class LeaderElectedListener(ABC):
         if self._subscriptions:
             return True
 
+        env_file = os.environ.get("ENV_FILE", self._env_file)
+
         # Acquire leader lease if Redis is enabled
         if self._redis_enabled:
-            env_file = os.environ.get("ENV_FILE", self._env_file)
-            self._redis = RedisClient(RedisSettings.from_env(env_file=env_file))
-            await self._redis.connect()
+            if self._redis is None:
+                self._redis = RedisClient(RedisSettings.from_env(env_file=env_file))
+                await self._redis.connect()
 
             lease_key = Keyspace(f"{self._get_service_name()}:leader").key(
                 self._get_lease_key()
@@ -131,12 +134,12 @@ class LeaderElectedListener(ABC):
                     self.__class__.__name__,
                     retry_delay,
                 )
-                await self._close_lease_and_redis()
+                self._lease = None
                 return False
 
         # Setup NATS client and subscriptions
         try:
-            nats_settings = NATSSettings.from_env(env_file=self._env_file)
+            nats_settings = NATSSettings.from_env(env_file=env_file)
             if not nats_settings.servers:
                 nats_settings.servers = (DEFAULT_NATS_URL,)
             if not nats_settings.name:
@@ -148,11 +151,11 @@ class LeaderElectedListener(ABC):
             self._subscriptions = await self._setup_subscriptions()
 
             await self._on_start_once()
+            self._started = True
 
             logger.info("%s started successfully", self.__class__.__name__)
             return True
         except Exception:
-            self._client = None
             logger.exception("Failed to initialize %s", self.__class__.__name__)
             await self._close_runtime()
             return False
@@ -172,10 +175,13 @@ class LeaderElectedListener(ABC):
                 pass
 
         await self._close_runtime()
+        await self._close_redis()
 
     async def _close_runtime(self) -> None:
         """Close NATS subscriptions and connections."""
-        await self._on_stop()
+        if self._started:
+            self._started = False
+            await self._on_stop()
 
         # Unsubscribe from all NATS subscriptions
         for subscription in self._subscriptions:
@@ -193,15 +199,17 @@ class LeaderElectedListener(ABC):
             await self._client.close()
             self._client = None
 
-        await self._close_lease_and_redis()
+        await self._release_lease()
 
-    async def _close_lease_and_redis(self) -> None:
-        """Release leader lease and close Redis connection."""
+    async def _release_lease(self) -> None:
+        """Release leader lease without closing Redis connection."""
         lease = self._lease
         self._lease = None
         if lease is not None:
             await lease.release()
 
+    async def _close_redis(self) -> None:
+        """Close Redis connection."""
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None

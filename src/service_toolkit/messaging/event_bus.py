@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from .events import build_event
@@ -68,26 +69,29 @@ class BaseEventBus:
             return
 
         try:
-            nats_settings = NATSSettings.from_env(env_file=".env")
+            env_file = os.environ.get("ENV_FILE", ".env")
+            nats_settings = NATSSettings.from_env(env_file=env_file)
             if not nats_settings.servers:
                 nats_settings.servers = (DEFAULT_NATS_URL,)
             if not nats_settings.name:
                 nats_settings.name = self.service_name
 
-            self._client = NATSClient(nats_settings)
-            await self._client.connect()
-            await self._client.ensure_stream(self.stream_name, self.subjects)
+            client = NATSClient(nats_settings)
+            await client.connect()
+            await client.ensure_stream(self.stream_name, self.subjects)
+            self._client = client
             logger.info(
                 "Connected to NATS for %s events (servers=%s)",
                 self.service_name,
                 ",".join(nats_settings.servers),
             )
-        except Exception as exc:  # pragma: no cover
-            self._client = None
+        except Exception:  # pragma: no cover
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
             logger.exception(
                 "Failed to initialize %s event bus",
                 self.service_name,
-                exc_info=exc,
             )
 
     async def stop(self) -> None:

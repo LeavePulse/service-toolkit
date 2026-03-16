@@ -227,8 +227,17 @@ class RedisClient:
         if self._settings.max_connections is not None:
             kwargs["max_connections"] = self._settings.max_connections
 
-        self._client = redis_async.Redis.from_url(self._settings.redis_url, **kwargs)
-        await self._client.ping()
+        client = redis_async.Redis.from_url(self._settings.redis_url, **kwargs)
+        try:
+            await client.ping()
+        except Exception:
+            close_fn = getattr(client, "aclose", None) or getattr(client, "close", None)
+            if close_fn is not None:
+                result = close_fn()
+                if inspect.isawaitable(result):
+                    await result
+            raise
+        self._client = client
         return self._client
 
     async def aclose(self) -> None:
@@ -460,7 +469,11 @@ class LeaderLease:
         try:
             await self._on_lost()  # type: ignore[misc]
         except Exception:  # noqa: BLE001  # pragma: no cover
-            return
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "LeaderLease on_lost callback failed for %s", self._lock.key
+            )
 
 
 __all__ = [

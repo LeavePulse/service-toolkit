@@ -36,15 +36,13 @@ class AsyncSingleton(Generic[T]):
         closer: Callable[[T], Awaitable[None]] | None = None,
     ) -> None:
         """Drop the cached value and optionally close it."""
-        value: object = _UNSET
         async with self._lock:
             if self._value is _UNSET:
                 return
             value = self._value
             self._value = _UNSET
-
-        if closer is not None:
-            await closer(cast("T", value))
+            if closer is not None:
+                await closer(cast("T", value))
 
 
 __all__ = ["AsyncSingleton"]
