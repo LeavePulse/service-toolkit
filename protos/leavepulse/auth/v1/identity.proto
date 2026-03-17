@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package leavepulse.auth.v1;
+
+option java_multiple_files = true;
+
+service IdentityService {
+  rpc ResolveDiscord(ResolveDiscordRequest) returns (IdentityLookupResponse);
+  rpc EnsureUser(EnsureUserRequest) returns (EnsureUserResponse);
+  rpc ResolveMinecraftByUuid(ResolveMinecraftRequest) returns (IdentityLookupResponse);
+  rpc ResolveMinecraftByNick(ResolveMinecraftByNickRequest) returns (IdentityLookupResponse);
+}
+
+message ResolveDiscordRequest {
+  string discord_subject = 1;
+}
+
+message EnsureUserRequest {
+  string discord_subject = 1;
+}
+
+message IdentityLookupResponse {
+  bool found = 1;
+  optional int64 user_id = 2;
+}
+
+message EnsureUserResponse {
+  bool found = 1;
+  optional int64 user_id = 2;
+  bool created = 3;
+  bool is_shadow = 4;
+}
+
+message ResolveMinecraftRequest {
+  string minecraft_uuid = 1;
+  optional int64 project_id = 2;
+}
+
+message ResolveMinecraftByNickRequest {
+  string minecraft_nick = 1;
+  optional int64 project_id = 2;
+}

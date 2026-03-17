@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package leavepulse.whitelist.v1;
+
+option java_multiple_files = true;
+
+service WhitelistConfigService {
+  rpc GetConfig(GetWhitelistConfigRequest) returns (WhitelistConfigResponse);
+}
+
+message GetWhitelistConfigRequest {
+  int64 server_id = 1;
+}
+
+message WhitelistFormField {
+  string key = 1;
+  string label = 2;
+  string field_type = 3;
+  bool required = 4;
+  optional int32 order = 5;
+}
+
+message WhitelistEntry {
+  optional int64 user_id = 1;
+  optional string minecraft_uuid = 2;
+  optional string minecraft_nick = 3;
+  optional string minecraft_account_type = 4;
+  optional string discord_name = 5;
+}
+
+message WhitelistConfigResponse {
+  bool enabled = 1;
+  optional int64 binding_server_id = 2;
+  string scope_type = 3;
+  string enforcement_mode = 4;
+  bool restrict_chat = 5;
+  optional int64 form_id = 6;
+  optional string form_name = 7;
+  repeated WhitelistFormField form_fields = 8;
+  repeated WhitelistEntry entries = 9;
+}

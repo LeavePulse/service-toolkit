@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package leavepulse.auth.v1;
+
+option java_multiple_files = true;
+
+service GatewayTokenService {
+  rpc IssueGatewayToken(IssueGatewayTokenRequest) returns (IssuedTokenResponse);
+  rpc MinecraftAccountsStats(MinecraftAccountsStatsRequest) returns (MinecraftAccountsStatsResponse);
+}
+
+message IssueGatewayTokenRequest {
+  int64 server_id = 1;
+  int32 expires_in_hours = 2;
+}
+
+message IssuedTokenResponse {
+  string token = 1;
+  string token_type = 2;
+  int32 expires_in = 3;
+  string audience = 4;
+  repeated string roles = 5;
+  repeated string scope = 6;
+  optional string tenant = 7;
+  string session_id = 8;
+}
+
+message MinecraftAccountsStatsRequest {}
+
+message MinecraftAccountsStatsResponse {
+  int32 registered_profiles = 1;
+}

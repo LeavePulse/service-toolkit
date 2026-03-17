@@ -8,6 +8,7 @@ import sys
 __all__ = [
     "AuthSettings",
     "DatabaseSettings",
+    "GrpcSettings",
     "InternalSettings",
     "RedisCoordinationSettings",
 ]
@@ -15,6 +16,7 @@ __all__ = [
 _EXPORT_MODULES = {
     "AuthSettings": ".config",
     "DatabaseSettings": ".config",
+    "GrpcSettings": ".config",
     "InternalSettings": ".config",
     "RedisCoordinationSettings": ".config",
 }

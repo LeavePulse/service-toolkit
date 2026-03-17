@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package leavepulse.server.v1;
+
+option java_multiple_files = true;
+
+service TeamSyncService {
+  rpc GetDiscordRoleTargets(GetDiscordRoleTargetsRequest) returns (DiscordRoleTargetsResponse);
+  rpc GetMinecraftGroupTargets(GetMinecraftGroupTargetsRequest) returns (MinecraftGroupTargetsResponse);
+  rpc SourceGrantsSnapshot(SourceGrantsSnapshotRequest) returns (TeamSyncMutationResponse);
+  rpc SourceGrantsMember(SourceGrantsMemberRequest) returns (TeamSyncMutationResponse);
+}
+
+message TeamSyncSubject {
+  string display_name = 1;
+  optional string avatar_url = 2;
+  optional int64 user_id = 3;
+  optional string discord_user_id = 4;
+  optional string minecraft_uuid = 5;
+  optional bool is_public = 6;
+}
+
+message GetDiscordRoleTargetsRequest {
+  int64 project_id = 1;
+  optional int64 role_id = 2;
+}
+
+message DiscordRoleTargetItem {
+  int64 role_id = 1;
+  string role_key = 2;
+  string role_name = 3;
+  string discord_role_id = 4;
+  repeated string desired_discord_user_ids = 5;
+}
+
+message DiscordRoleTargetsResponse {
+  int64 project_id = 1;
+  repeated DiscordRoleTargetItem items = 2;
+}
+
+message GetMinecraftGroupTargetsRequest {
+  int64 server_id = 1;
+  optional int64 role_id = 2;
+}
+
+message MinecraftGroupTargetItem {
+  int64 server_id = 1;
+  int64 role_id = 2;
+  string role_key = 3;
+  string role_name = 4;
+  string luckperms_group = 5;
+  repeated string desired_minecraft_uuids = 6;
+}
+
+message MinecraftGroupTargetsResponse {
+  int64 project_id = 1;
+  int64 server_id = 2;
+  repeated MinecraftGroupTargetItem items = 3;
+}
+
+message SourceGrantsSnapshotRequest {
+  int64 project_id = 1;
+  int64 role_id = 2;
+  string source_type = 3;
+  string source_ref = 4;
+  string scope_type = 5;
+  optional int64 scope_id = 6;
+  repeated TeamSyncSubject subjects = 7;
+}
+
+message SourceGrantsMemberRequest {
+  int64 project_id = 1;
+  int64 role_id = 2;
+  string source_type = 3;
+  string source_ref = 4;
+  bool active = 5;
+  string scope_type = 6;
+  optional int64 scope_id = 7;
+  TeamSyncSubject subject = 8;
+}
+
+message TeamSyncMutationResponse {
+  int64 project_id = 1;
+  int64 role_id = 2;
+  int32 affected_members = 3;
+  bool materialized = 4;
+}

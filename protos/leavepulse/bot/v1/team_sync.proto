@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package leavepulse.bot.v1;
+
+option java_multiple_files = true;
+
+service DiscordTeamSyncService {
+  rpc RefreshDiscordSync(RefreshDiscordSyncRequest) returns (DiscordSyncResponse);
+}
+
+message RefreshDiscordSyncRequest {
+  int64 project_id = 1;
+  optional int64 role_id = 2;
+  bool import_snapshot = 3;
+  bool reconcile = 4;
+}
+
+message DiscordSyncResponse {
+  int32 roles = 1;
+  int32 imported = 2;
+  int32 reconciled = 3;
+}

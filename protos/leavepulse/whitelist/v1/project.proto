@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package leavepulse.whitelist.v1;
+
+option java_multiple_files = true;
+
+service WhitelistProjectService {
+  rpc ProofComplete(ProofCompleteRequest) returns (ProofCompleteResponse);
+}
+
+message ProofCompleteRequest {
+  int64 project_id = 1;
+  int64 user_id = 2;
+  string minecraft_account_type = 3;
+  string minecraft_uuid = 4;
+  string minecraft_nick = 5;
+}
+
+message ProofCompleteResponse {
+  int32 finalized_count = 1;
+  repeated int64 finalized_application_ids = 2;
+}

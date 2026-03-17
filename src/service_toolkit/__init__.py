@@ -18,6 +18,9 @@ __all__ = [
     "DEFAULT_REDIS_HOST",
     "DEFAULT_REDIS_PORT",
     "DatabaseSettings",
+    "GrpcSettings",
+    "InternalTokenCallCredentials",
+    "InternalTokenInterceptor",
     "HealthController",
     "InternalSettings",
     "JWTAuthMiddleware",
@@ -38,6 +41,12 @@ __all__ = [
     "SnowflakeGenerator",
     "ThrottledGaugeRefresh",
     "bind_log_user_id",
+    "build_grpc_lifecycle",
+    "build_shared_channel",
+    "close_shared_channels",
+    "create_grpc_server",
+    "start_grpc_server",
+    "stop_grpc_server",
     "build_db_config",
     "build_event",
     "build_prometheus_instrumentation",
@@ -70,6 +79,9 @@ _EXPORT_MODULES = {
     "DEFAULT_REDIS_HOST": ".state.redis",
     "DEFAULT_REDIS_PORT": ".state.redis",
     "DatabaseSettings": ".settings.config",
+    "GrpcSettings": ".settings.config",
+    "InternalTokenCallCredentials": ".grpc.interceptors",
+    "InternalTokenInterceptor": ".grpc.interceptors",
     "HealthController": ".web.health",
     "InternalSettings": ".settings.config",
     "JWTAuthMiddleware": ".web.middleware",
@@ -90,6 +102,12 @@ _EXPORT_MODULES = {
     "SnowflakeGenerator": ".ids.snowflake",
     "ThrottledGaugeRefresh": ".observability.metrics",
     "bind_log_user_id": ".observability.logging",
+    "build_grpc_lifecycle": ".grpc.server",
+    "build_shared_channel": ".grpc.channels",
+    "close_shared_channels": ".grpc.channels",
+    "create_grpc_server": ".grpc.server",
+    "start_grpc_server": ".grpc.server",
+    "stop_grpc_server": ".grpc.server",
     "build_db_config": ".db.litestar",
     "build_event": ".messaging.events",
     "build_prometheus_instrumentation": ".observability.prometheus",
@@ -169,6 +187,11 @@ def _translate_optional_import_error(
         return ModuleNotFoundError(
             "Auth helpers require the optional 'auth' extra. "
             "Install with 'pip install service-toolkit[auth]'."
+        )
+    if missing == "grpc":
+        return ModuleNotFoundError(
+            "gRPC helpers require the optional 'grpc' extra. "
+            "Install with 'pip install service-toolkit[grpc]'."
         )
     if missing.startswith("opentelemetry"):
         return ModuleNotFoundError(

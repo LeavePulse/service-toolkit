@@ -44,6 +44,7 @@ class AuthSettings(BaseSettings):
     """
 
     base_url: str = "http://auth-service:8000"
+    grpc_target: str = "auth-service:50000"
     jwks_url: str | None = None
     jwks_cache_ttl_seconds: int = 3600
     http_timeout_seconds: float = 5.0
@@ -78,9 +79,20 @@ class RedisCoordinationSettings(BaseSettings):
     leader_ttl_seconds: float = 30.0
 
 
+class GrpcSettings(BaseSettings):
+    """gRPC server configuration.
+
+    Default ``prefix`` when loading: ``GRPC_``.
+    """
+
+    port: int = 50051
+    reflection_enabled: bool = True
+
+
 __all__ = [
     "AuthSettings",
     "DatabaseSettings",
+    "GrpcSettings",
     "InternalSettings",
     "RedisCoordinationSettings",
 ]

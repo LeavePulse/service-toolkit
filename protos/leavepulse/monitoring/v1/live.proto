@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package leavepulse.monitoring.v1;
+
+option java_multiple_files = true;
+
+service MonitoringLiveService {
+  rpc GetLive(GetLiveRequest) returns (ServerLiveStatus);
+  rpc BatchLive(BatchLiveRequest) returns (BatchLiveResponse);
+}
+
+message GetLiveRequest {
+  int64 server_id = 1;
+}
+
+message BatchLiveRequest {
+  repeated int64 server_ids = 1;
+}
+
+message ServerLiveStatus {
+  int64 server_id = 1;
+  string collected_at = 2;
+  optional int32 online = 3;
+  optional int32 max = 4;
+  optional string version = 5;
+  optional string motd = 6;
+  optional string country = 7;
+  optional string country_code = 8;
+  optional string source = 9;
+  optional string connection_state = 10;
+  string online_state = 11;
+  string freshness_state = 12;
+  optional string online_reason = 13;
+  repeated string players = 14;
+}
+
+message BatchLiveResponse {
+  repeated ServerLiveStatus items = 1;
+}
