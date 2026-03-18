@@ -45,6 +45,7 @@ tracing = [
 
 [project.scripts]
 lp-arch-lint = "service_toolkit.dev.arch_linter:main"
+lp-generate-grpc = "service_toolkit.grpc.codegen:main"
 lp-prometheus-runtime = "service_toolkit.observability.prometheus_runtime:main"
 lp-smoke-test = "service_toolkit.dev.smoke_tester:main"
 
@@ -87,3 +88,6 @@ build-backend = "hatchling.build"
 
 [tool.mypy]
 python_version = "3.14"
+
+[tool.ruff]
+extend-exclude = ["src/service_toolkit/grpc/generated"]

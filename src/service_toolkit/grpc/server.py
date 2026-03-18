@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Sequence
 
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from grpc_reflection.v1alpha import reflection
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
