@@ -49,6 +49,7 @@ IGNORE_PATHS = {
     "alembic",
     "node_modules",
     "dist",
+    "generated",
 }
 
 # 1. Global Forbidden Patterns (Optimized with pre-compilation)
