@@ -35,7 +35,8 @@ def build_shared_channel(
         msg = "gRPC target must not be empty."
         raise ValueError(msg)
 
-    spec = (normalized_target, token is not None)
+    normalized_token = str(token or "").strip() or None
+    spec = (normalized_target, normalized_token)
 
     with _CHANNEL_LOCK:
         existing = _SHARED_CHANNELS.get(normalized_key)
@@ -56,7 +57,17 @@ def build_shared_channel(
             ("grpc.max_receive_message_length", 16 * 1024 * 1024),
         ]
 
-        channel = grpc.aio.insecure_channel(normalized_target, options=options)
+        interceptors: list[grpc.aio.ClientInterceptor] = []
+        if normalized_token is not None:
+            from .interceptors import InternalTokenClientInterceptor
+
+            interceptors.append(InternalTokenClientInterceptor(normalized_token))
+
+        channel = grpc.aio.insecure_channel(
+            normalized_target,
+            options=options,
+            interceptors=interceptors or None,
+        )
 
         _SHARED_CHANNELS[normalized_key] = channel
         _SHARED_CHANNEL_SPECS[normalized_key] = spec

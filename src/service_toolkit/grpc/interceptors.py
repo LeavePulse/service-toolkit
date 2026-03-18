@@ -1,8 +1,9 @@
-"""gRPC server interceptors for internal authentication."""
+"""gRPC interceptors for internal authentication."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import grpc
@@ -65,4 +66,43 @@ class InternalTokenCallCredentials:
         return [("x-internal-token", self._token)]
 
 
-__all__ = ["InternalTokenCallCredentials", "InternalTokenInterceptor"]
+class InternalTokenClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
+    """Inject ``x-internal-token`` into unary-unary client metadata."""
+
+    def __init__(self, token: str) -> None:
+        if not token:
+            msg = "Internal token must not be empty."
+            raise ValueError(msg)
+        self._token = token
+
+    async def intercept_unary_unary(
+        self,
+        continuation: Any,
+        client_call_details: grpc.aio.ClientCallDetails,
+        request: Any,
+    ) -> Any:
+        metadata = list(_normalize_metadata(client_call_details.metadata))
+        metadata.append(("x-internal-token", self._token))
+        updated_details = grpc.aio.ClientCallDetails(
+            method=client_call_details.method,
+            timeout=client_call_details.timeout,
+            metadata=metadata,
+            credentials=client_call_details.credentials,
+            wait_for_ready=client_call_details.wait_for_ready,
+        )
+        return await continuation(updated_details, request)
+
+
+def _normalize_metadata(
+    metadata: Sequence[tuple[str, str]] | None,
+) -> list[tuple[str, str]]:
+    if metadata is None:
+        return []
+    return [(str(key), str(value)) for key, value in metadata]
+
+
+__all__ = [
+    "InternalTokenCallCredentials",
+    "InternalTokenClientInterceptor",
+    "InternalTokenInterceptor",
+]

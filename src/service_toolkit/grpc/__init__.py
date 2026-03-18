@@ -7,6 +7,7 @@ import sys
 
 __all__ = [
     "InternalTokenCallCredentials",
+    "InternalTokenClientInterceptor",
     "InternalTokenInterceptor",
     "abort_invalid",
     "abort_not_found",
@@ -22,6 +23,7 @@ __all__ = [
 
 _EXPORT_MODULES = {
     "InternalTokenCallCredentials": ".interceptors",
+    "InternalTokenClientInterceptor": ".interceptors",
     "InternalTokenInterceptor": ".interceptors",
     "abort_invalid": ".servicer",
     "abort_not_found": ".servicer",
