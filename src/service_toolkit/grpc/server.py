@@ -110,7 +110,11 @@ def build_grpc_lifecycle(
     """
 
     async def _startup() -> None:
-        interceptors: list[grpc.aio.ServerInterceptor] = []
+        from .metrics import GrpcServerMetricsInterceptor
+
+        interceptors: list[grpc.aio.ServerInterceptor] = [
+            GrpcServerMetricsInterceptor(service_name)
+        ]
         if internal_token:
             from .interceptors import InternalTokenInterceptor
 

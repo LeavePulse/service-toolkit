@@ -19,6 +19,7 @@ def build_shared_channel(
     key: str,
     target: str,
     token: str | None = None,
+    service_name: str | None = None,
 ) -> grpc.aio.Channel:
     """Return a process-wide shared async gRPC channel.
 
@@ -36,7 +37,10 @@ def build_shared_channel(
         raise ValueError(msg)
 
     normalized_token = str(token or "").strip() or None
-    spec = (normalized_target, normalized_token)
+    normalized_service_name = str(service_name or "").strip() or normalized_key.split(
+        ".", maxsplit=1
+    )[0].replace("_", "-")
+    spec = (normalized_target, normalized_token, normalized_service_name)
 
     with _CHANNEL_LOCK:
         existing = _SHARED_CHANNELS.get(normalized_key)
@@ -57,7 +61,14 @@ def build_shared_channel(
             ("grpc.max_receive_message_length", 16 * 1024 * 1024),
         ]
 
-        interceptors: list[grpc.aio.ClientInterceptor] = []
+        from .metrics import GrpcClientMetricsInterceptor
+
+        interceptors: list[grpc.aio.ClientInterceptor] = [
+            GrpcClientMetricsInterceptor(
+                service_name=normalized_service_name,
+                target=normalized_target,
+            )
+        ]
         if normalized_token is not None:
             from .interceptors import InternalTokenClientInterceptor
 

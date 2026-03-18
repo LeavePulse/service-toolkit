@@ -6,6 +6,8 @@ import importlib
 import sys
 
 __all__ = [
+    "GrpcClientMetricsInterceptor",
+    "GrpcServerMetricsInterceptor",
     "InternalTokenCallCredentials",
     "InternalTokenClientInterceptor",
     "InternalTokenInterceptor",
@@ -22,6 +24,8 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
+    "GrpcClientMetricsInterceptor": ".metrics",
+    "GrpcServerMetricsInterceptor": ".metrics",
     "InternalTokenCallCredentials": ".interceptors",
     "InternalTokenClientInterceptor": ".interceptors",
     "InternalTokenInterceptor": ".interceptors",
