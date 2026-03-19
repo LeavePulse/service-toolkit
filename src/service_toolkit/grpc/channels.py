@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 _CHANNEL_LOCK = Lock()
 _SHARED_CHANNELS: dict[str, grpc.aio.Channel] = {}
 _SHARED_CHANNEL_SPECS: dict[str, tuple[object, ...]] = {}
+_GRPC_KEEPALIVE_TIME_MS = 300_000
+_GRPC_KEEPALIVE_TIMEOUT_MS = 10_000
+_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS = 0
+_GRPC_MAX_RECEIVE_MESSAGE_LENGTH = 16 * 1024 * 1024
 
 
 class _MultiCallableProxy:
@@ -299,10 +303,10 @@ def build_shared_channel(
             return existing
 
         options = [
-            ("grpc.keepalive_time_ms", 30_000),
-            ("grpc.keepalive_timeout_ms", 10_000),
-            ("grpc.keepalive_permit_without_calls", 1),
-            ("grpc.max_receive_message_length", 16 * 1024 * 1024),
+            ("grpc.keepalive_time_ms", _GRPC_KEEPALIVE_TIME_MS),
+            ("grpc.keepalive_timeout_ms", _GRPC_KEEPALIVE_TIMEOUT_MS),
+            ("grpc.keepalive_permit_without_calls", _GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS),
+            ("grpc.max_receive_message_length", _GRPC_MAX_RECEIVE_MESSAGE_LENGTH),
         ]
         channel = _SharedChannelProxy(
             key=normalized_key,

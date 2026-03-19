@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import grpc
@@ -27,6 +28,31 @@ class _FakeContext:
 
     def code(self) -> grpc.StatusCode | None:
         return self._code
+
+
+class _FakeUnaryUnaryCall:
+    def __init__(self, status_code: grpc.StatusCode) -> None:
+        self._future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        self._status_code = status_code
+
+    def add_done_callback(self, callback: object) -> None:
+        assert callable(callback)
+        self._future.add_done_callback(lambda _: callback(self))
+
+    async def code(self) -> grpc.StatusCode:
+        return self._status_code
+
+    def cancelled(self) -> bool:
+        return self._future.cancelled()
+
+    def set_exception(self, exc: BaseException) -> None:
+        self._future.set_exception(exc)
+
+    def set_result(self, result: object) -> None:
+        self._future.set_result(result)
+
+    def __await__(self) -> object:
+        return self._future.__await__()
 
 
 def _sample_value(name: str, labels: dict[str, str]) -> float:
@@ -138,6 +164,72 @@ async def test_client_metrics_interceptor_records_failure() -> None:
             client_call_details,
             object(),
         )
+
+    assert _sample_value("leavepulse_grpc_client_requests_total", counter_labels) == (
+        before_total + 1
+    )
+    assert _sample_value(
+        "leavepulse_grpc_client_request_duration_seconds_count",
+        histogram_labels,
+    ) == (before_count + 1)
+
+
+@pytest.mark.asyncio
+async def test_client_metrics_interceptor_records_completed_call_failure() -> None:
+    service_name = "grpc_metrics_client_completed_failure"
+    target = "gateway-ingest:50300"
+    grpc_service = "leavepulse.gateway.v1.gatewayteamsyncservice"
+    grpc_method = "refreshminecraftsync"
+    counter_labels = {
+        "service": service_name,
+        "target": target,
+        "grpc_service": grpc_service,
+        "grpc_method": grpc_method,
+        "grpc_code": "deadline_exceeded",
+    }
+    histogram_labels = {
+        "service": service_name,
+        "target": target,
+        "grpc_service": grpc_service,
+        "grpc_method": grpc_method,
+    }
+    before_total = _sample_value(
+        "leavepulse_grpc_client_requests_total", counter_labels
+    )
+    before_count = _sample_value(
+        "leavepulse_grpc_client_request_duration_seconds_count",
+        histogram_labels,
+    )
+
+    interceptor = GrpcClientMetricsInterceptor(
+        service_name=service_name,
+        target=target,
+    )
+    client_call_details = SimpleNamespace(
+        method=b"/leavepulse.gateway.v1.GatewayTeamSyncService/RefreshMinecraftSync",
+        timeout=None,
+        metadata=None,
+        credentials=None,
+        wait_for_ready=None,
+    )
+    call = _FakeUnaryUnaryCall(grpc.StatusCode.DEADLINE_EXCEEDED)
+
+    async def _continuation(_: object, __: object) -> object:
+        return call
+
+    observed_call = await interceptor.intercept_unary_unary(
+        _continuation,
+        client_call_details,
+        object(),
+    )
+
+    call.set_exception(_FakeRpcError(grpc.StatusCode.DEADLINE_EXCEEDED))
+
+    with pytest.raises(_FakeRpcError):
+        await observed_call
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
     assert _sample_value("leavepulse_grpc_client_requests_total", counter_labels) == (
         before_total + 1

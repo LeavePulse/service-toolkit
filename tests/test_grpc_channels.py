@@ -162,3 +162,44 @@ def test_close_shared_channels_closes_created_channels(
     assert len(created) == 1
     assert created[0].closed is True
     assert "test.close" not in grpc_channels._SHARED_CHANNELS  # noqa: SLF001
+
+
+def test_build_shared_channel_uses_stable_keepalive_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_options: list[dict[str, int]] = []
+
+    def _fake_insecure_channel(
+        target: str,
+        *,
+        options: object = None,
+        interceptors: object = None,
+    ) -> _FakeChannel:
+        del target, interceptors
+        captured_options.append(dict(options or []))
+        return _FakeChannel(1)
+
+    monkeypatch.setattr(
+        grpc_channels.grpc.aio,
+        "insecure_channel",
+        _fake_insecure_channel,
+    )
+
+    channel = grpc_channels.build_shared_channel(
+        key="test.keepalive-options",
+        target="server-service:50201",
+    )
+
+    async def _use_channel() -> int:
+        call = channel.unary_unary("/leavepulse.test.v1.ExampleService/GetOne")
+        return await call(object())
+
+    assert asyncio.run(_use_channel()) == 1
+    assert captured_options == [
+        {
+            "grpc.keepalive_time_ms": 300_000,
+            "grpc.keepalive_timeout_ms": 10_000,
+            "grpc.keepalive_permit_without_calls": 0,
+            "grpc.max_receive_message_length": 16 * 1024 * 1024,
+        }
+    ]
