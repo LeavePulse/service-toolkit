@@ -43,6 +43,7 @@ PLATFORM_PERM_BITS: dict[str, int] = {
     "platform.servers.community.official_reply": 19,
     "platform.servers.bot.manage": 20,
     "platform.servers.bot.debug": 21,
+    "platform.servers.whitelist.direct_manage": 22,
 }
 
 # Project/root-scoped permissions (server-service).
@@ -63,6 +64,7 @@ PROJECT_PERM_BITS: dict[str, int] = {
     "monitoring.alerts.manage": 13,
     "community.moderate": 14,
     "community.official_reply": 15,
+    "whitelist.direct_manage": 16,
 }
 
 
