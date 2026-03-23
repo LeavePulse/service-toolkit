@@ -1,0 +1,100 @@
+name: reusable-build-ghcr
+
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: Docker build context relative to the caller repository root.
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: Dockerfile path relative to the caller repository root.
+        required: false
+        type: string
+        default: "docker/Dockerfile"
+      image_name:
+        description: Optional override for the GHCR image name.
+        required: false
+        type: string
+        default: ""
+      cache_scope:
+        description: Optional override for the GitHub Actions build cache scope.
+        required: false
+        type: string
+        default: ""
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: [self-hosted, Linux, X64, runner-vps, ci-heavy]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Prepare image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          repo_name="${{ github.event.repository.name }}"
+
+          image_name="${{ inputs.image_name }}"
+          if [[ -z "$image_name" ]]; then
+            image_name="leavepulse-$repo_name"
+          fi
+
+          cache_scope="${{ inputs.cache_scope }}"
+          if [[ -z "$cache_scope" ]]; then
+            cache_scope="${repo_name}-build"
+          fi
+
+          echo "name=${{ env.REGISTRY }}/$owner/$image_name" >> "$GITHUB_OUTPUT"
+          echo "cache_scope=$cache_scope" >> "$GITHUB_OUTPUT"
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ steps.image.outputs.name }}
+          flavor: |
+            latest=true
+          tags: |
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ steps.image.outputs.cache_scope }}
+          cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=max
+          secrets: | # pragma: allowlist secret
+            github_token=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }} # pragma: allowlist secret
