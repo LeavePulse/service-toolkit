@@ -105,11 +105,12 @@ jobs:
           df -h
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
-          push: true
+          load: true
           provenance: false
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
@@ -118,3 +119,13 @@ jobs:
           cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=min,ignore-error=true
           secrets: | # pragma: allowlist secret
             github_token=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }} # pragma: allowlist secret
+
+      - name: Push image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            docker push "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
