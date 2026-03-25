@@ -84,6 +84,26 @@ jobs:
           tags: |
             type=sha
 
+      - name: Clean stale runner workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workspace_root="${{ runner.workspace }}"
+          current_repo="${{ github.event.repository.name }}"
+
+          if [[ -d "$workspace_root" ]]; then
+            find "$workspace_root" -mindepth 1 -maxdepth 1 \
+              ! -name "$current_repo" \
+              ! -name "_actions" \
+              ! -name "_tool" \
+              ! -name "_temp" \
+              ! -name "_PipelineMapping" \
+              -exec rm -rf {} +
+          fi
+
+          df -h
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -95,6 +115,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ steps.image.outputs.cache_scope }}
-          cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=max
+          cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=min,ignore-error=true
           secrets: | # pragma: allowlist secret
             github_token=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }} # pragma: allowlist secret
