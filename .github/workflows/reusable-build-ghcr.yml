@@ -122,14 +122,31 @@ jobs:
 
       - name: Push image tags
         shell: bash
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          printf '%s' '${{ secrets.GITHUB_TOKEN }}' | docker login '${{ env.REGISTRY }}' \
+          max_attempts=3
+          retry_delay_seconds=5
+
+          printf '%s' "$REGISTRY_PASSWORD" | docker login '${{ env.REGISTRY }}' \
             --username '${{ github.actor }}' \
             --password-stdin
 
           while IFS= read -r tag; do
             [[ -n "$tag" ]] || continue
-            docker push "$tag"
+            attempt=1
+            while true; do
+              if docker push "$tag"; then
+                break
+              fi
+
+              if [[ "$attempt" -ge "$max_attempts" ]]; then
+                exit 1
+              fi
+
+              sleep "$retry_delay_seconds"
+              attempt=$((attempt + 1))
+            done
           done <<< "${{ steps.meta.outputs.tags }}"
