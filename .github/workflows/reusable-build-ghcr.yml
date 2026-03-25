@@ -120,6 +120,13 @@ jobs:
           secrets: | # pragma: allowlist secret
             github_token=${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }} # pragma: allowlist secret
 
+      - name: Log in to registry for push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - name: Push image tags
         shell: bash
         run: |
