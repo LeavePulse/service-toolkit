@@ -22,6 +22,28 @@ class _DummyJWKSCache:
         return None
 
 
+class _StaticIntrospector:
+    def __init__(
+        self,
+        *,
+        active: bool,
+        user_id: str | None = None,
+        jti: str | None = None,
+    ) -> None:
+        self._response = verifier_module._IntrospectionResponse(
+            active=active,
+            user_id=user_id,
+            jti=jti,
+        )
+
+    async def introspect(
+        self,
+        token: str,
+    ) -> verifier_module._IntrospectionResponse:
+        assert token == "token"
+        return self._response
+
+
 def test_shared_jwks_cache_reuses_instance_for_same_config() -> None:
     cache_a = JWKSCache.shared(
         url="https://auth.example/.well-known/jwks.json",
@@ -96,3 +118,40 @@ async def test_jwt_verifier_supports_custom_payload_and_optional_claim_checks(
     assert decode_kwargs["issuer"] is None
     assert decode_kwargs["audience"] is None
     assert decode_kwargs["options"] == {"verify_aud": False, "verify_iss": False}
+
+
+@pytest.mark.asyncio
+async def test_jwt_verifier_rejects_inactive_introspected_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verifier_module.jwt,
+        "get_unverified_header",
+        lambda token: {"kid": "known-kid"},
+    )
+    monkeypatch.setattr(
+        verifier_module.jwt,
+        "decode",
+        lambda *args, **kwargs: {
+            "sub": "42",
+            "jti": "777",
+            "type": "access",
+            "user_status": "active",
+        },
+    )
+
+    verifier = JWTVerifier(
+        jwks_cache=cast("JWKSCache", _DummyJWKSCache()),
+        issuer=None,
+        audience=None,
+        payload_type=verifier_module.JWTPayload,
+        allowed_types={"access"},
+    )
+    verifier._introspector = _StaticIntrospector(
+        active=False,
+        user_id="42",
+        jti="777",
+    )
+
+    with pytest.raises(verifier_module.JWTVerificationError, match="not active"):
+        await verifier.verify("token")

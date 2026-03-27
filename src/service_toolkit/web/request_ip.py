@@ -51,12 +51,16 @@ def _forwarded_header_ip(value: str | None) -> str | None:
     return None
 
 
-def resolve_client_ip(request: Request) -> str | None:
+def resolve_client_ip(
+    request: Request,
+    *,
+    trust_forwarded_chain: bool = True,
+) -> str | None:
     """Return the best-effort real client IP for a request.
 
     Priority:
     1. Cloudflare / proxy headers when present.
-    2. The first value in ``X-Forwarded-For`` / ``Forwarded``.
+    2. The first value in ``X-Forwarded-For`` / ``Forwarded`` when enabled.
     3. Litestar's socket-level ``request.client.host``.
     """
 
@@ -66,11 +70,12 @@ def resolve_client_ip(request: Request) -> str | None:
         if candidate := _normalize_ip_candidate(headers.get(header_name)):
             return candidate
 
-    if candidate := _first_valid_csv_ip(headers.get("x-forwarded-for")):
-        return candidate
+    if trust_forwarded_chain:
+        if candidate := _first_valid_csv_ip(headers.get("x-forwarded-for")):
+            return candidate
 
-    if candidate := _forwarded_header_ip(headers.get("forwarded")):
-        return candidate
+        if candidate := _forwarded_header_ip(headers.get("forwarded")):
+            return candidate
 
     if request.client and request.client.host:
         return _normalize_ip_candidate(request.client.host)

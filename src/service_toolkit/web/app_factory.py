@@ -179,6 +179,7 @@ def create_service_app(
             http_timeout_seconds=float(auth_settings.http_timeout_seconds),
             issuer=auth_settings.issuer,
             audience=auth_settings.audience,
+            introspect_url=auth_settings.resolved_introspect_url,
         )
 
     # ── Middleware stack ──────────────────────────────────────────────

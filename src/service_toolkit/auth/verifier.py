@@ -5,6 +5,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeVar, cast, overload
 
 try:
+    import httpx
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    if exc.name == "httpx":
+        raise ModuleNotFoundError(
+            "Auth helpers require the optional 'auth' extra. "
+            "Install with 'pip install service-toolkit[auth]'."
+        ) from exc
+    raise
+
+try:
     from jose import JWTError, jwt  # type: ignore[import-untyped]
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
     if exc.name == "jose":
@@ -15,7 +25,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
     raise
 
 try:
-    from msgspec import ValidationError, convert
+    from msgspec import Struct, ValidationError, convert
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
     if exc.name == "msgspec":
         raise ModuleNotFoundError(
@@ -25,11 +35,48 @@ except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
     raise
 
 from service_toolkit.auth.schemas import JWTPayload
+from service_toolkit.web.http import build_shared_async_client
 
 if TYPE_CHECKING:
     from service_toolkit.auth.jwks import JWKSCache
 
 PayloadT = TypeVar("PayloadT")
+_ACTIVE_SESSION_TOKEN_TYPES = frozenset({"access", "ws_access"})
+
+
+class _IntrospectionResponse(Struct, kw_only=True):
+    active: bool
+    user_id: str | None = None
+    jti: str | None = None
+
+
+class _AuthIntrospector:
+    def __init__(self, *, url: str, timeout_seconds: float) -> None:
+        normalized_url = str(url).strip()
+        if not normalized_url:
+            msg = "Token introspection URL must not be empty."
+            raise ValueError(msg)
+        normalized_timeout = float(timeout_seconds)
+        self._client = build_shared_async_client(
+            key=f"service_toolkit.auth.introspect:{normalized_url}:{normalized_timeout}",
+            timeout_seconds=normalized_timeout,
+        )
+        self._url = normalized_url
+
+    async def introspect(self, token: str) -> _IntrospectionResponse:
+        try:
+            response = await self._client.post(self._url, json={"token": token})
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            msg = "Token introspection failed"
+            raise JWTVerificationError(msg) from exc
+
+        try:
+            return convert(payload, _IntrospectionResponse)
+        except ValidationError as exc:
+            msg = "Token introspection payload is invalid"
+            raise JWTVerificationError(msg) from exc
 
 
 class JWTVerificationError(ValueError):
@@ -47,12 +94,23 @@ class JWTVerifier[PayloadT]:
         audience: str | None,
         payload_type: type[PayloadT],
         allowed_types: set[str | None] | None = None,
+        introspect_url: str | None = None,
+        introspect_http_timeout_seconds: float = 5.0,
     ) -> None:
         self._jwks_cache = jwks_cache
         self._issuer = issuer
         self._audience = audience
         self._payload_type = payload_type
         self._allowed_types = allowed_types or {"access"}
+        normalized_introspect_url = str(introspect_url or "").strip()
+        self._introspector = (
+            _AuthIntrospector(
+                url=normalized_introspect_url,
+                timeout_seconds=float(introspect_http_timeout_seconds),
+            )
+            if normalized_introspect_url
+            else None
+        )
 
     async def verify(self, token: str) -> PayloadT:
         """Verify and decode a JWT token."""
@@ -108,6 +166,31 @@ class JWTVerifier[PayloadT]:
             msg = "Unsupported token type"
             raise JWTVerificationError(msg)
 
+        payload_user_status = cast("str | None", getattr(parsed, "user_status", None))
+        if (
+            self._introspector is not None
+            and normalized_type in _ACTIVE_SESSION_TOKEN_TYPES
+            and payload_user_status is not None
+        ):
+            introspection = await self._introspector.introspect(token)
+            if not introspection.active:
+                msg = "Token session is not active"
+                raise JWTVerificationError(msg)
+
+            payload_sub = cast("str | None", getattr(parsed, "sub", None))
+            if (
+                introspection.user_id
+                and payload_sub
+                and introspection.user_id != payload_sub
+            ):
+                msg = "Token introspection subject mismatch"
+                raise JWTVerificationError(msg)
+
+            payload_jti = cast("str | None", getattr(parsed, "jti", None))
+            if introspection.jti and payload_jti and introspection.jti != payload_jti:
+                msg = "Token introspection session mismatch"
+                raise JWTVerificationError(msg)
+
         return parsed
 
 
@@ -119,6 +202,7 @@ def build_shared_jwt_verifier(
     http_timeout_seconds: float,
     issuer: str | None,
     audience: str | None,
+    introspect_url: str | None = None,
     allowed_types: set[str | None] | None = None,
 ) -> JWTVerifier[JWTPayload]: ...
 
@@ -131,6 +215,7 @@ def build_shared_jwt_verifier(
     http_timeout_seconds: float,
     issuer: str | None,
     audience: str | None,
+    introspect_url: str | None = None,
     payload_type: type[PayloadT],
     allowed_types: set[str | None] | None = None,
 ) -> JWTVerifier[PayloadT]: ...
@@ -143,6 +228,7 @@ def build_shared_jwt_verifier(
     http_timeout_seconds: float,
     issuer: str | None,
     audience: str | None,
+    introspect_url: str | None = None,
     payload_type: type[PayloadT] | None = None,
     allowed_types: set[str | None] | None = None,
 ) -> JWTVerifier[PayloadT] | JWTVerifier[JWTPayload]:
@@ -161,6 +247,8 @@ def build_shared_jwt_verifier(
             audience=audience,
             payload_type=JWTPayload,
             allowed_types=allowed_types,
+            introspect_url=introspect_url,
+            introspect_http_timeout_seconds=float(http_timeout_seconds),
         )
 
     return JWTVerifier(
@@ -173,6 +261,8 @@ def build_shared_jwt_verifier(
         audience=audience,
         payload_type=payload_type,
         allowed_types=allowed_types,
+        introspect_url=introspect_url,
+        introspect_http_timeout_seconds=float(http_timeout_seconds),
     )
 
 

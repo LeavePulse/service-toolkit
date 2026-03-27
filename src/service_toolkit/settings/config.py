@@ -53,11 +53,17 @@ class AuthSettings(BaseSettings):
 
     @property
     def resolved_jwks_url(self) -> str:
-        """Return the JWKS endpoint, falling back to ``<base_url>/auth/.well-known/jwks.json``."""
+        """Return the JWKS endpoint, derived from ``base_url`` when needed."""
         if self.jwks_url:
             return self.jwks_url
         base = self.base_url.rstrip("/")
         return f"{base}/auth/.well-known/jwks.json"
+
+    @property
+    def resolved_introspect_url(self) -> str:
+        """Return the token introspection endpoint derived from ``base_url``."""
+        base = self.base_url.rstrip("/")
+        return f"{base}/auth/introspect"
 
 
 class InternalSettings(BaseSettings):

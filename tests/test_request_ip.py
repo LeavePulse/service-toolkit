@@ -45,6 +45,20 @@ def test_resolve_client_ip_uses_first_x_forwarded_for_value() -> None:
     assert resolve_client_ip(request) == "198.51.100.7"
 
 
+def test_resolve_client_ip_can_ignore_forwarded_chain() -> None:
+    request = cast(
+        Any,
+        FakeRequest(
+            headers={"x-forwarded-for": "198.51.100.7, 172.19.0.1"},
+            host="172.19.0.1",
+        ),
+    )
+
+    assert (
+        resolve_client_ip(request, trust_forwarded_chain=False) == "172.19.0.1"
+    )
+
+
 def test_resolve_client_ip_falls_back_to_socket_host() -> None:
     request = cast(Any, FakeRequest(headers={}, host="192.0.2.5"))
 
