@@ -179,6 +179,22 @@ class ProjectionSpec:
         )
 
 
+def request_projection(request: object) -> ProjectionSpec:
+    """Return the projection attached by ``with_projection()`` when available."""
+
+    projection = getattr(request, "projection", None)
+    if isinstance(projection, ProjectionSpec):
+        return projection
+
+    state = getattr(request, "state", None)
+    if state is not None:
+        projection = getattr(state, "projection", None)
+        if isinstance(projection, ProjectionSpec):
+            return projection
+
+    return ProjectionSpec()
+
+
 @dataclass(frozen=True, slots=True)
 class ResponsePolicy:
     """Permission-aware visibility policy for response paths."""
@@ -190,6 +206,17 @@ class ResponsePolicy:
     def __post_init__(self) -> None:
         object.__setattr__(self, "allowed_fields", _normalize_paths(self.allowed_fields))
         object.__setattr__(self, "denied_fields", _normalize_paths(self.denied_fields))
+
+    @classmethod
+    def allowing_all(
+        cls,
+        *,
+        denied_fields: str | Iterable[str] | None = None,
+    ) -> ResponsePolicy:
+        return cls(
+            allow_all=True,
+            denied_fields=_normalize_paths(denied_fields),
+        )
 
     def can_view(self, path: str) -> bool:
         normalized = _normalize_path(path)
@@ -259,4 +286,5 @@ __all__ = [
     "ExpansionLoader",
     "ProjectionSpec",
     "ResponsePolicy",
+    "request_projection",
 ]

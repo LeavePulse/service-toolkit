@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from service_toolkit import ExpansionLoader, ProjectionSpec, ResponsePolicy
+from service_toolkit import (
+    ExpansionLoader,
+    ProjectionSpec,
+    ResponsePolicy,
+    request_projection,
+)
 from service_toolkit.web import with_projection
 
 
@@ -78,6 +83,32 @@ def test_response_policy_supports_parent_allows_and_child_denies() -> None:
         "owner",
         "moderation_warnings",
     ]
+
+
+def test_response_policy_allowing_all_applies_denied_paths() -> None:
+    policy = ResponsePolicy.allowing_all(denied_fields="owner.email,moderation_warnings")
+
+    assert policy.can_view("owner.username") is True
+    assert policy.can_view("owner.email") is False
+    assert policy.can_view("moderation_warnings.detail") is False
+
+
+def test_request_projection_reads_request_and_state_projection() -> None:
+    direct_projection = ProjectionSpec.from_query_params(fields="owner")
+    request_with_projection = SimpleNamespace(
+        projection=direct_projection,
+        state=SimpleNamespace(),
+    )
+    assert request_projection(request_with_projection) is direct_projection
+
+    state_projection = ProjectionSpec.from_query_params(include="servers")
+    request_with_state_projection = SimpleNamespace(
+        state=SimpleNamespace(projection=state_projection),
+    )
+    assert request_projection(request_with_state_projection) is state_projection
+
+    empty_request = SimpleNamespace()
+    assert request_projection(empty_request).is_default is True
 
 
 @pytest.mark.asyncio
