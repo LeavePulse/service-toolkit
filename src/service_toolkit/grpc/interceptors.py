@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -37,7 +38,7 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         metadata = dict(handler_call_details.invocation_metadata or [])
         received_token = metadata.get("x-internal-token")
 
-        if received_token != self._token:
+        if not hmac.compare_digest(received_token or "", self._token):
             logger.warning(
                 "gRPC auth failed for %s — invalid or missing internal token",
                 method,
