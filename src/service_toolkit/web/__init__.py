@@ -7,9 +7,12 @@ import sys
 
 __all__ = [
     "DEFAULT_JWT_EXCLUDE",
+    "ExpansionLoader",
     "HealthController",
     "JWTAuthMiddleware",
+    "ProjectionSpec",
     "RateLimitFailureMode",
+    "ResponsePolicy",
     "build_shared_async_client",
     "close_shared_async_clients",
     "create_service_app",
@@ -18,13 +21,17 @@ __all__ = [
     "rate_limited_request",
     "resolve_client_ip",
     "resolve_cors_origins",
+    "with_projection",
 ]
 
 _EXPORT_MODULES = {
     "DEFAULT_JWT_EXCLUDE": ".app_factory",
+    "ExpansionLoader": ".projection",
     "HealthController": ".health",
     "JWTAuthMiddleware": ".middleware",
+    "ProjectionSpec": ".projection",
     "RateLimitFailureMode": ".rate_limit",
+    "ResponsePolicy": ".projection",
     "build_shared_async_client": ".http",
     "close_shared_async_clients": ".http",
     "create_service_app": ".app_factory",
@@ -33,6 +40,7 @@ _EXPORT_MODULES = {
     "rate_limited_request": ".rate_limit",
     "resolve_client_ip": ".request_ip",
     "resolve_cors_origins": ".cors",
+    "with_projection": ".projection_decorator",
 }
 _SUBMODULES = {
     "app_factory": ".app_factory",
@@ -41,6 +49,8 @@ _SUBMODULES = {
     "http": ".http",
     "middleware": ".middleware",
     "openapi": ".openapi",
+    "projection": ".projection",
+    "projection_decorator": ".projection_decorator",
     "rate_limit": ".rate_limit",
     "request_ip": ".request_ip",
 }
@@ -59,6 +69,11 @@ def __getattr__(name: str):
             raise ModuleNotFoundError(
                 "App factory helpers require the optional 'errors' extra. "
                 "Install with 'pip install service-toolkit[errors]'."
+            ) from exc
+        if missing == "litestar":
+            raise ModuleNotFoundError(
+                "Web projection helpers require Litestar. "
+                "Install with 'pip install litestar[standard]'."
             ) from exc
         if missing in {"jose", "msgspec"}:
             raise ModuleNotFoundError(
