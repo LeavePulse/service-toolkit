@@ -115,6 +115,8 @@ def create_service_app(
     prometheus_route: str = "/metrics",
     # Logging
     logging_config: BaseLoggingConfig | None = None,
+    # Global DI
+    dependencies: Mapping[str, Any] | None = None,
     # Error handling
     custom_translations: Mapping[str, Mapping[str, str]] | None = None,
     # Lifecycle
@@ -172,6 +174,7 @@ def create_service_app(
     jwt_verifier = None
     if auth_settings is not None:
         from ..auth import build_shared_jwt_verifier
+        from .auth import current_user_dependency
 
         jwt_verifier = build_shared_jwt_verifier(
             jwks_url=auth_settings.resolved_jwks_url,
@@ -181,6 +184,12 @@ def create_service_app(
             audience=auth_settings.audience,
             introspect_url=auth_settings.resolved_introspect_url,
         )
+        resolved_dependencies = {
+            **current_user_dependency(),
+            **dict(dependencies or {}),
+        }
+    else:
+        resolved_dependencies = dict(dependencies or {})
 
     # ── Middleware stack ──────────────────────────────────────────────
     middleware: list[DefineMiddleware] = []
@@ -262,6 +271,7 @@ def create_service_app(
         middleware=middleware,
         cors_config=cors_config,
         exception_handlers=exception_handlers,
+        dependencies=resolved_dependencies or None,
     )
 
     apply_problem_details(app, service_name=service_name)

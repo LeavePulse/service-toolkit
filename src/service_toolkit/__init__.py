@@ -10,6 +10,7 @@ __all__ = [
     "AuthSettings",
     "BaseEventBus",
     "CacheMode",
+    "CurrentUser",
     "DBConfig",
     "DEFAULT_EPOCH_MS",
     "DEFAULT_JWT_EXCLUDE",
@@ -59,12 +60,16 @@ __all__ = [
     "build_shared_async_client",
     "build_standard_logging_config",
     "close_shared_async_clients",
+    "current_user",
+    "current_user_dependency",
     "configure_default_generator",
     "create_service_app",
     "enforce_request_rate_limit",
     "generate_id",
     "metric_label",
+    "provide_current_user",
     "rate_limited_request",
+    "require_user",
     "request_projection",
     "reset_default_generator",
     "resolve_client_ip",
@@ -78,6 +83,7 @@ _EXPORT_MODULES = {
     "AuthSettings": ".settings.config",
     "BaseEventBus": ".messaging.event_bus",
     "CacheMode": ".state.cache",
+    "CurrentUser": ".web.auth",
     "DBConfig": ".db.litestar",
     "DEFAULT_EPOCH_MS": ".ids.snowflake",
     "DEFAULT_JWT_EXCLUDE": ".web.app_factory",
@@ -127,12 +133,16 @@ _EXPORT_MODULES = {
     "build_shared_async_client": ".web.http",
     "build_standard_logging_config": ".observability.logging",
     "close_shared_async_clients": ".web.http",
+    "current_user": ".web.auth",
+    "current_user_dependency": ".web.auth",
     "configure_default_generator": ".ids.snowflake",
     "create_service_app": ".web.app_factory",
     "enforce_request_rate_limit": ".web.rate_limit",
     "generate_id": ".ids.snowflake",
     "metric_label": ".observability.metrics",
+    "provide_current_user": ".web.auth",
     "rate_limited_request": ".web.rate_limit",
+    "require_user": ".web.auth",
     "request_projection": ".web.projection",
     "reset_default_generator": ".ids.snowflake",
     "resolve_client_ip": ".web.request_ip",
@@ -189,7 +199,7 @@ def _translate_optional_import_error(
         )
     if missing in {"awesome_errors", "awesome-errors"}:
         return ModuleNotFoundError(
-            "App factory and error helpers require the optional 'errors' extra. "
+            "App factory, web auth, and error helpers require the optional 'errors' extra. "
             "Install with 'pip install service-toolkit[errors]'."
         )
     if missing == "msgspec" and module_name.startswith(".state."):
@@ -201,6 +211,11 @@ def _translate_optional_import_error(
         return ModuleNotFoundError(
             "Auth helpers require the optional 'auth' extra. "
             "Install with 'pip install service-toolkit[auth]'."
+        )
+    if missing == "litestar":
+        return ModuleNotFoundError(
+            "Web helpers require Litestar. "
+            "Install with 'pip install litestar[standard]'."
         )
     if missing == "grpc":
         return ModuleNotFoundError(

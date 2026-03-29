@@ -6,6 +6,7 @@ import importlib
 import sys
 
 __all__ = [
+    "CurrentUser",
     "DEFAULT_JWT_EXCLUDE",
     "ExpansionLoader",
     "HealthController",
@@ -15,10 +16,14 @@ __all__ = [
     "ResponsePolicy",
     "build_shared_async_client",
     "close_shared_async_clients",
+    "current_user",
+    "current_user_dependency",
     "create_service_app",
     "default_openapi_render_plugins",
     "enforce_request_rate_limit",
+    "provide_current_user",
     "rate_limited_request",
+    "require_user",
     "request_projection",
     "resolve_client_ip",
     "resolve_cors_origins",
@@ -26,6 +31,7 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
+    "CurrentUser": ".auth",
     "DEFAULT_JWT_EXCLUDE": ".app_factory",
     "ExpansionLoader": ".projection",
     "HealthController": ".health",
@@ -35,10 +41,14 @@ _EXPORT_MODULES = {
     "ResponsePolicy": ".projection",
     "build_shared_async_client": ".http",
     "close_shared_async_clients": ".http",
+    "current_user": ".auth",
+    "current_user_dependency": ".auth",
     "create_service_app": ".app_factory",
     "default_openapi_render_plugins": ".openapi",
     "enforce_request_rate_limit": ".rate_limit",
+    "provide_current_user": ".auth",
     "rate_limited_request": ".rate_limit",
+    "require_user": ".auth",
     "request_projection": ".projection",
     "resolve_client_ip": ".request_ip",
     "resolve_cors_origins": ".cors",
@@ -46,6 +56,7 @@ _EXPORT_MODULES = {
 }
 _SUBMODULES = {
     "app_factory": ".app_factory",
+    "auth": ".auth",
     "cors": ".cors",
     "health": ".health",
     "http": ".http",
@@ -69,12 +80,12 @@ def __getattr__(name: str):
         missing = exc.name or ""
         if missing in {"awesome_errors", "awesome-errors"}:
             raise ModuleNotFoundError(
-                "App factory helpers require the optional 'errors' extra. "
+                "App factory and web auth helpers require the optional 'errors' extra. "
                 "Install with 'pip install service-toolkit[errors]'."
             ) from exc
         if missing == "litestar":
             raise ModuleNotFoundError(
-                "Web projection helpers require Litestar. "
+                "Web helpers require Litestar. "
                 "Install with 'pip install litestar[standard]'."
             ) from exc
         if missing in {"jose", "msgspec"}:

@@ -35,6 +35,7 @@ def test_root_package_does_not_eagerly_import_optional_modules() -> None:
         "service_toolkit.state",
         "service_toolkit.state.redis",
         "service_toolkit.web",
+        "service_toolkit.web.auth",
         "service_toolkit.web.app_factory",
     ):
         import service_toolkit
@@ -46,9 +47,11 @@ def test_root_package_does_not_eagerly_import_optional_modules() -> None:
         assert "service_toolkit.errors.awesome_errors" not in sys.modules
         assert "service_toolkit.observability.tracing" not in sys.modules
         assert "service_toolkit.state.redis" not in sys.modules
+        assert "service_toolkit.web.auth" not in sys.modules
         assert "service_toolkit.web.app_factory" not in sys.modules
         assert callable(service_toolkit.build_event)
         assert service_toolkit.HealthController is not None
+        assert "CurrentUser" in dir(service_toolkit)
         assert "service_toolkit.web.app_factory" not in sys.modules
 
 
