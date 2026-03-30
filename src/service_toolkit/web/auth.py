@@ -42,6 +42,12 @@ def provide_current_user(request: Request) -> AuthUser:
     return require_user(request)
 
 
+def provide_user(request: Request) -> AuthUser:
+    """Alias provider for handlers that use ``user: CurrentUser``."""
+
+    return provide_current_user(request)
+
+
 def current_user_dependency(
     *,
     key: str = "current_user",
@@ -53,13 +59,22 @@ def current_user_dependency(
     can use the shorter ``user: CurrentUser`` signature without extra wiring.
     """
 
-    provider = Provide(
-        provide_current_user,
-        use_cache=use_cache,
-        sync_to_thread=False,
-    )
-    dependency_keys = (key, "user") if key == "current_user" else (key,)
-    return {dependency_key: provider for dependency_key in dependency_keys}
+    dependencies = {
+        key: Provide(
+            provide_current_user,
+            use_cache=use_cache,
+            sync_to_thread=False,
+        )
+    }
+    if key == "current_user":
+        # Litestar 2.21+ rejects equal providers registered under multiple keys,
+        # so the `user` alias needs a distinct wrapper function.
+        dependencies["user"] = Provide(
+            provide_user,
+            use_cache=use_cache,
+            sync_to_thread=False,
+        )
+    return dependencies
 
 
 __all__ = [
@@ -67,5 +82,6 @@ __all__ = [
     "current_user",
     "current_user_dependency",
     "provide_current_user",
+    "provide_user",
     "require_user",
 ]

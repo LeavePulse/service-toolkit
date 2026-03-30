@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Annotated, get_args, get_origin
 
 import pytest
+from litestar import Litestar, get
 from awesome_errors import AuthRequiredError
 from litestar.di import Provide
 
@@ -49,11 +50,27 @@ def test_current_user_dependency_registers_expected_provider() -> None:
 
     assert list(dependencies) == ["current_user", "user"]
     provider = dependencies["current_user"]
+    user_provider = dependencies["user"]
     assert isinstance(provider, Provide)
-    assert dependencies["user"] is provider
+    assert isinstance(user_provider, Provide)
+    assert user_provider is not provider
     assert provider.dependency is provide_current_user
+    assert user_provider.dependency is not provide_current_user
     assert provider.use_cache is False
     assert provider.sync_to_thread is False
+
+
+def test_current_user_dependency_registers_without_duplicate_provider_error() -> None:
+    @get("/me")
+    async def handler(user: CurrentUser, current_user: CurrentUser) -> dict[str, int]:
+        return {
+            "user_id": int(user.user_id),
+            "current_user_id": int(current_user.user_id),
+        }
+
+    app = Litestar(route_handlers=[handler], dependencies=current_user_dependency())
+
+    assert app is not None
 
 
 def test_current_user_annotation_uses_dependency_marker() -> None:
