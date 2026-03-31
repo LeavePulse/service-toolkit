@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from typing import cast
 
 import msgspec
 import pytest
 
 from service_toolkit.auth import JWKSCache, JWTVerifier, build_shared_jwt_verifier
+from service_toolkit.auth import jwks as jwks_module
 from service_toolkit.auth import verifier as verifier_module
 
 
@@ -20,6 +22,13 @@ class _DummyJWKSCache:
         if kid == "known-kid":
             return {"kid": kid}
         return None
+
+
+class _UnavailableJWKSCache:
+    async def get_key(self, kid: str) -> dict[str, object] | None:
+        del kid
+        msg = "JWKS refresh failed and the required key is unavailable"
+        raise jwks_module.JWKSUnavailableError(msg)
 
 
 class _StaticIntrospector:
@@ -155,3 +164,72 @@ async def test_jwt_verifier_rejects_inactive_introspected_session(
 
     with pytest.raises(verifier_module.JWTVerificationError, match="not active"):
         await verifier.verify("token")
+
+
+@pytest.mark.asyncio
+async def test_jwt_verifier_marks_jwks_unavailable_as_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verifier_module.jwt,
+        "get_unverified_header",
+        lambda token: {"kid": "known-kid"},
+    )
+
+    verifier = JWTVerifier(
+        jwks_cache=cast("JWKSCache", _UnavailableJWKSCache()),
+        issuer=None,
+        audience=None,
+        payload_type=_GatewayPayload,
+        allowed_types={"access", "ws_access", None},
+    )
+
+    with pytest.raises(verifier_module.JWTVerificationError) as exc_info:
+        await verifier.verify("token")
+
+    assert exc_info.value.retryable is True
+    assert exc_info.value.code == "jwks_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_jwks_cache_refreshes_on_key_miss_before_ttl_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"keys": [{"kid": "new-kid", "kty": "RSA"}]}
+
+    class _FakeClient:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 5.0
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            del exc_type, exc, tb
+
+        @staticmethod
+        async def get(url: str) -> _FakeResponse:
+            assert url == "https://auth.example/.well-known/jwks.json"
+            return _FakeResponse()
+
+    monkeypatch.setattr(jwks_module.httpx, "AsyncClient", _FakeClient)
+
+    cache = JWKSCache(
+        url="https://auth.example/.well-known/jwks.json",
+        ttl_seconds=300,
+        timeout_seconds=5.0,
+    )
+    cache._keys = {"old-kid": {"kid": "old-kid"}}
+    cache._expires_at = time.monotonic() + 300.0
+
+    key = await cache.get_key("new-kid")
+
+    assert key == {"kid": "new-kid", "kty": "RSA"}
+    assert cache._keys == {"new-kid": {"kid": "new-kid", "kty": "RSA"}}

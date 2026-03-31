@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class JWKSUnavailableError(RuntimeError):
+    """Raised when JWKS cannot be refreshed and no matching cached key exists."""
+
+
 class JWKSCache:
     """Cache JWKS keys with a TTL to avoid frequent network calls."""
 
@@ -57,36 +61,56 @@ class JWKSCache:
             return cache
 
     async def get_key(self, kid: str) -> dict[str, Any] | None:
-        keys = await self._get_keys()
-        return keys.get(kid)
+        if not kid:
+            return None
 
-    async def _get_keys(self) -> dict[str, dict[str, Any]]:
         now = time.monotonic()
-        if self._keys and now < self._expires_at:
-            return self._keys
+        cache_is_fresh = bool(self._keys) and now < self._expires_at
+        keys, refresh_failed = await self._get_keys(force_refresh=False)
+        key = keys.get(kid)
+        if key is not None:
+            return key
+
+        if cache_is_fresh:
+            keys, refresh_failed = await self._get_keys(force_refresh=True)
+            key = keys.get(kid)
+            if key is not None:
+                return key
+
+        if refresh_failed:
+            msg = "JWKS refresh failed and the required key is unavailable"
+            raise JWKSUnavailableError(msg)
+
+        return None
+
+    async def _get_keys(
+        self, *, force_refresh: bool
+    ) -> tuple[dict[str, dict[str, Any]], bool]:
+        now = time.monotonic()
+        if not force_refresh and self._keys and now < self._expires_at:
+            return self._keys, False
 
         async with self._lock:
             now = time.monotonic()
-            if self._keys and now < self._expires_at:
-                return self._keys
+            if not force_refresh and self._keys and now < self._expires_at:
+                return self._keys, False
 
             try:
                 async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                     response = await client.get(self._url)
                     response.raise_for_status()
                     payload = response.json()
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ValueError):
                 # Best-effort fallback: use stale keys (or empty set) to avoid
                 # turning transient network errors into 500s across services.
                 logger.exception("Failed to fetch JWKS keys; using cached value")
-                return self._keys
+                return self._keys, True
 
             keys = {
                 key.get("kid"): key for key in payload.get("keys", []) if key.get("kid")
             }
             self._keys = keys
             self._expires_at = now + self._ttl_seconds
-            return self._keys
+            return self._keys, False
 
-
-__all__ = ["JWKSCache"]
+__all__ = ["JWKSCache", "JWKSUnavailableError"]

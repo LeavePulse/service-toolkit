@@ -34,6 +34,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
         ) from exc
     raise
 
+from service_toolkit.auth.jwks import JWKSUnavailableError
 from service_toolkit.auth.schemas import JWTPayload
 from service_toolkit.web.http import build_shared_async_client
 
@@ -68,7 +69,14 @@ class _AuthIntrospector:
             response = await self._client.post(self._url, json={"token": token})
             response.raise_for_status()
             payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.HTTPError as exc:
+            msg = "Token introspection is temporarily unavailable"
+            raise JWTVerificationError(
+                msg,
+                code="introspection_unavailable",
+                retryable=True,
+            ) from exc
+        except ValueError as exc:
             msg = "Token introspection failed"
             raise JWTVerificationError(msg) from exc
 
@@ -81,6 +89,17 @@ class _AuthIntrospector:
 
 class JWTVerificationError(ValueError):
     """Raised when a JWT cannot be verified."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "invalid_token",
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
 
 
 class JWTVerifier[PayloadT]:
@@ -126,10 +145,18 @@ class JWTVerifier[PayloadT]:
             msg = "Missing kid header"
             raise JWTVerificationError(msg)
 
-        key = await self._jwks_cache.get_key(str(kid))
+        try:
+            key = await self._jwks_cache.get_key(str(kid))
+        except JWKSUnavailableError as exc:
+            msg = "Token verification is temporarily unavailable"
+            raise JWTVerificationError(
+                msg,
+                code="jwks_unavailable",
+                retryable=True,
+            ) from exc
         if not key:
             msg = "Unknown key id"
-            raise JWTVerificationError(msg)
+            raise JWTVerificationError(msg, code="unknown_key_id")
 
         decode_options: dict[str, bool] = {}
         audience = (self._audience or "").strip() or None
@@ -150,7 +177,7 @@ class JWTVerifier[PayloadT]:
             )
         except JWTError as exc:
             msg = "Token verification failed"
-            raise JWTVerificationError(msg) from exc
+            raise JWTVerificationError(msg, code="token_verification_failed") from exc
 
         try:
             # `strict=False` keeps the schema forward-compatible when auth-service
