@@ -28,11 +28,11 @@ sqlalchemy = ["sqlalchemy~=2.0"]
 errors = ["awesome-errors @ git+https://github.com/THEROER/awesome-errors"]
 grpc = [
     "grpcio>=1.71.0,<2",
-    "grpcio-tools>=1.71.0,<2",
     "grpcio-health-checking>=1.71.0,<2",
     "grpcio-reflection>=1.71.0,<2",
     "protobuf>=5.29.0,<6",
 ]
+grpc-codegen = ["grpcio-tools>=1.71.0,<2"]
 tracing = [
     "opentelemetry-api>=1.40.0,<2.0.0",
     "opentelemetry-sdk>=1.40.0,<2.0.0",

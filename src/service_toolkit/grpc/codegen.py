@@ -44,7 +44,7 @@ def _run_protoc(*, proto_dir: Path, out_dir: Path, proto_files: list[str]) -> No
     except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
         msg = (
             "grpc_tools is not installed. Install service-toolkit with the "
-            "'grpc' extra before running lp-generate-grpc."
+            "'grpc-codegen' extra before running lp-generate-grpc."
         )
         raise SystemExit(msg) from exc
 

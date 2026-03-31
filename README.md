@@ -19,6 +19,8 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 > Install extras as needed:
 > - `pip install service-toolkit[nats]` for NATS helpers
 > - `pip install service-toolkit[redis]` for Redis helpers
+> - `pip install service-toolkit[grpc]` for gRPC runtime helpers
+> - `pip install service-toolkit[grpc-codegen]` for `lp-generate-grpc`
 > - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
 > - `pip install service-toolkit[auth]` for JWT/JWKS helpers
 
@@ -177,6 +179,8 @@ Install with extras when needed:
 ```bash
 poetry add "git+https://github.com/THEROER/service-toolkit[nats]"
 poetry add "git+https://github.com/THEROER/service-toolkit[redis]"
+poetry add "git+https://github.com/THEROER/service-toolkit[grpc]"
+poetry add "git+https://github.com/THEROER/service-toolkit[grpc-codegen]"
 ```
 
 Run tests with:
