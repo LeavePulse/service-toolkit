@@ -96,9 +96,16 @@ jobs:
               ],
             };
 
-            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+            const webhookUrl = (process.env.DISCORD_WEBHOOK_URL ?? "").trim();
             if (!webhookUrl) {
-              core.warning("DISCORD_WEBHOOK_URL is not configured");
+              core.setFailed("DISCORD_WEBHOOK_URL is not configured");
+              return;
+            }
+
+            try {
+              new URL(webhookUrl);
+            } catch {
+              core.setFailed("DISCORD_WEBHOOK_URL is invalid");
               return;
             }
 
@@ -135,6 +142,6 @@ jobs:
               }
             }
 
-            core.warning(
+            core.setFailed(
               `Discord commit notification was not delivered after 3 attempts: ${lastFailure}`,
             );
