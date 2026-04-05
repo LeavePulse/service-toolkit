@@ -1,0 +1,140 @@
+name: reusable-discord-commit-notify
+
+on:
+  workflow_call:
+    secrets:
+      discord_commit_webhook_url:
+        description: Discord webhook URL for commit notifications.
+        required: false
+
+jobs:
+  notify:
+    runs-on: [self-hosted, Linux, X64, runner-vps, ci-heavy]
+    permissions:
+      contents: read
+
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.discord_commit_webhook_url }}
+
+    steps:
+      - name: Post commit notification to Discord
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commits = Array.isArray(context.payload.commits)
+              ? context.payload.commits
+              : [];
+            const headCommit =
+              context.payload.head_commit ?? commits[commits.length - 1] ?? null;
+            const branch = context.ref.replace("refs/heads/", "");
+            const shortSha = context.sha.slice(0, 7);
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const repoUrl =
+              context.payload.repository?.html_url ??
+              `https://github.com/${repository}`;
+            const commitUrl = headCommit?.url ?? `${repoUrl}/commit/${context.sha}`;
+            const compareUrl = context.payload.compare ?? commitUrl;
+            const rawMessage = (headCommit?.message ?? "").trim() || "No commit message";
+            const summaryLine = rawMessage.split("\n")[0];
+            const truncatedSummary =
+              summaryLine.length > 200
+                ? `${summaryLine.slice(0, 197)}...`
+                : summaryLine;
+            const truncatedMessage =
+              rawMessage.length > 1800
+                ? `${rawMessage.slice(0, 1797)}...`
+                : rawMessage;
+            const actor =
+              headCommit?.author?.username
+                ? `@${headCommit.author.username}`
+                : headCommit?.author?.name ?? context.actor;
+            const commitCount = commits.length || 1;
+            const pushLabel =
+              commitCount === 1
+                ? "New commit"
+                : `New push (${commitCount} commits)`;
+            const descriptionLines = [
+              `${pushLabel} on \`${branch}\` in [${repository}](${repoUrl}).`,
+            ];
+
+            if (truncatedMessage !== truncatedSummary) {
+              descriptionLines.push("", truncatedMessage);
+            }
+
+            const payload = {
+              content: `**${repository}**: \`${branch}\` • \`${shortSha}\` • ${truncatedSummary}`,
+              embeds: [
+                {
+                  title: truncatedSummary,
+                  url: commitUrl,
+                  color: 0x5865f2,
+                  description: descriptionLines.join("\n"),
+                  fields: [
+                    {
+                      name: "Commit",
+                      value: `[\`${shortSha}\`](${commitUrl})`,
+                      inline: true,
+                    },
+                    {
+                      name: "Author",
+                      value: actor,
+                      inline: true,
+                    },
+                    {
+                      name: "Branch",
+                      value: `\`${branch}\``,
+                      inline: true,
+                    },
+                    {
+                      name: "Compare",
+                      value: `[Open diff](${compareUrl})`,
+                      inline: true,
+                    },
+                  ],
+                  timestamp: headCommit?.timestamp ?? new Date().toISOString(),
+                },
+              ],
+            };
+
+            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+            if (!webhookUrl) {
+              core.warning("DISCORD_WEBHOOK_URL is not configured");
+              return;
+            }
+
+            let lastFailure = "unknown error";
+
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+              try {
+                const response = await fetch(webhookUrl, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(payload),
+                });
+
+                if (response.ok) {
+                  core.info("Discord commit notification sent");
+                  return;
+                }
+
+                const responseBody = await response.text();
+                lastFailure = `HTTP ${response.status}: ${responseBody}`;
+              } catch (error) {
+                lastFailure =
+                  error instanceof Error ? error.message : String(error);
+              }
+
+              core.warning(
+                `Discord notification attempt ${attempt}/3 failed: ${lastFailure}`,
+              );
+
+              if (attempt < 3) {
+                await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+              }
+            }
+
+            core.warning(
+              `Discord commit notification was not delivered after 3 attempts: ${lastFailure}`,
+            );
