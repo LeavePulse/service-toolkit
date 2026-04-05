@@ -6,7 +6,6 @@ import importlib
 import sys
 
 __all__ = [
-    "AuthSettings",
     "DatabaseSettings",
     "GrpcSettings",
     "InternalSettings",
@@ -14,7 +13,6 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
-    "AuthSettings": ".config",
     "DatabaseSettings": ".config",
     "GrpcSettings": ".config",
     "InternalSettings": ".config",

@@ -122,7 +122,7 @@ CONDITIONALLY_FORBIDDEN: list[Rule] = [
         "trigger": r"class\s+\w+(Handler|Socket|Connection)",
         "exclude_files": r"singleton|lifespan|app|deps|container",
         "name": "Request-scope Verifier",
-        "reason": "JWTVerifier/JWKSCache created in connection/request scope. This causes JWKS spam. Move to singleton/lifespan or use build_shared_jwt_verifier().",
+        "reason": "JWTVerifier/JWKSCache created in connection/request scope. This causes JWKS spam. Move to singleton/lifespan or use a provider-owned shared verifier helper.",
     },
 ]
 

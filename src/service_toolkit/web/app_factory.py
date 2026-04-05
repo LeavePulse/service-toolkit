@@ -14,8 +14,8 @@ Usage::
         route_handlers=[BillingController, MonobankWebhookController],
         cors_allow_origins=settings.cors_allow_origins,
         cors_allow_origins_debug=settings.cors_allow_origins_debug,
-        # JWT auth
-        auth_settings=settings.auth,
+        # Provider-owned auth integration
+        auth_integration=auth_integration,
         jwt_exclude_patterns=[r"^/billing/providers/monobank/webhook$"],
         # SQLAlchemy
         sqlalchemy_config=sqlalchemy_config,
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from litestar.logging.config import BaseLoggingConfig
     from litestar.types import ControllerRouterHandler, ExceptionHandlersMap
 
-    from ..settings.config import AuthSettings
+    from .jwt_integration import JWTAuthIntegration
 
     LifeSpanHandler: TypeAlias = Callable[..., object]
 
@@ -100,12 +100,9 @@ def create_service_app(
         "DELETE",
         "OPTIONS",
     ),
-    # Auth (optional — omit auth_settings to skip JWT middleware entirely)
-    auth_settings: AuthSettings | None = None,
+    # Auth (optional — omit auth_integration to skip JWT middleware entirely)
+    auth_integration: JWTAuthIntegration | None = None,
     jwt_exclude_patterns: Sequence[str] = (),
-    jwt_require_auth: bool = False,
-    jwt_middleware_class: type | None = None,
-    jwt_middleware_kwargs: dict[str, Any] | None = None,
     # SQLAlchemy (optional)
     sqlalchemy_config: SQLAlchemyAsyncConfig | None = None,
     # Tracing
@@ -129,8 +126,8 @@ def create_service_app(
 ) -> Litestar:
     """Create a fully-configured Litestar application.
 
-    This handles all the boilerplate: error handling, OpenAPI docs,
-    CORS, Prometheus metrics, OpenTelemetry tracing, JWT auth middleware,
+    This handles all the boilerplate: error handling, OpenAPI docs, CORS,
+    Prometheus metrics, OpenTelemetry tracing, provider-owned auth middleware,
     SQLAlchemy plugin, and health endpoints.
     """
 
@@ -170,22 +167,10 @@ def create_service_app(
         route=prometheus_route,
     )
 
-    # ── JWT Verifier ─────────────────────────────────────────────────
-    jwt_verifier = None
-    if auth_settings is not None:
-        from ..auth import build_shared_jwt_verifier
-        from .auth import current_user_dependency
-
-        jwt_verifier = build_shared_jwt_verifier(
-            jwks_url=auth_settings.resolved_jwks_url,
-            jwks_ttl_seconds=int(auth_settings.jwks_cache_ttl_seconds),
-            http_timeout_seconds=float(auth_settings.http_timeout_seconds),
-            issuer=auth_settings.issuer,
-            audience=auth_settings.audience,
-            introspect_url=auth_settings.resolved_introspect_url,
-        )
+    # ── Auth integration ─────────────────────────────────────────────
+    if auth_integration is not None:
         resolved_dependencies = {
-            **current_user_dependency(),
+            **dict(auth_integration.dependencies),
             **dict(dependencies or {}),
         }
     else:
@@ -198,24 +183,17 @@ def create_service_app(
     middleware.append(DefineMiddleware(request_context_middleware))
     middleware.append(DefineMiddleware(PrometheusMiddleware))
 
-    if jwt_verifier is not None:
-        jwt_cls = jwt_middleware_class
-        if jwt_cls is None:
-            from .middleware import JWTAuthMiddleware
-
-            jwt_cls = JWTAuthMiddleware
-
+    if auth_integration is not None:
         exclude = list(DEFAULT_JWT_EXCLUDE) + list(jwt_exclude_patterns)
         jwt_kwargs: dict[str, Any] = {
-            "jwt_verifier": jwt_verifier,
+            "jwt_verifier": auth_integration.jwt_verifier,
             "exclude": exclude,
             "exclude_http_methods": ["OPTIONS"],
         }
-        if jwt_middleware_class is None:
-            jwt_kwargs["require_auth"] = jwt_require_auth
-        if jwt_middleware_kwargs:
-            jwt_kwargs.update(jwt_middleware_kwargs)
-        middleware.append(DefineMiddleware(jwt_cls, **jwt_kwargs))
+        jwt_kwargs.update(auth_integration.middleware_kwargs)
+        middleware.append(
+            DefineMiddleware(auth_integration.middleware_class, **jwt_kwargs)
+        )
 
     middleware.extend(extra_middleware)
 
@@ -239,7 +217,7 @@ def create_service_app(
         "render_plugins": default_openapi_render_plugins(),
         "path": "/docs",
     }
-    if jwt_verifier is not None:
+    if auth_integration is not None:
         openapi_kwargs["components"] = Components(
             security_schemes={"BearerAuth": _BEARER_SECURITY_SCHEME}
         )

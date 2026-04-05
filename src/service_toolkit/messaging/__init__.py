@@ -10,8 +10,6 @@ from .events import build_event, utc_now_iso
 __all__ = [
     "BaseEventBus",
     "DEFAULT_NATS_URL",
-    "GatewayCommandBus",
-    "GatewayCommandBusConfig",
     "LeaderElectedListener",
     "NATSClient",
     "NATSSettings",
@@ -22,8 +20,6 @@ __all__ = [
 _OPTIONAL_EXPORT_MODULES = {
     "BaseEventBus": ".event_bus",
     "DEFAULT_NATS_URL": ".nats",
-    "GatewayCommandBus": ".gateway_commands",
-    "GatewayCommandBusConfig": ".gateway_commands",
     "LeaderElectedListener": ".leader_elected_listener",
     "NATSClient": ".nats",
     "NATSSettings": ".nats",

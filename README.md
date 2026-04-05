@@ -12,8 +12,13 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
 - Redis-backed request rate limiting helpers with explicit failure policies (`enforce_request_rate_limit`, `rate_limited_request`).
 - Unified local/Redis/hybrid lookup cache with TTL, in-flight deduplication, and Redis fallback policies (`LookupCache`).
-- Shared JWT/JWKS verification helpers with process-wide JWKS reuse (`build_shared_jwt_verifier`, `JWKSCache.shared`).
 - (Extensible) space for other shared service utilities.
+
+`service-toolkit` no longer owns provider contracts or provider-specific DX.
+For auth-service settings models, JWT/JWKS verification, Litestar auth wiring,
+public profile client helpers, and platform RBAC maps, use the provider-owned
+`auth-service-sdk` package. For project RBAC maps and scope constants, use the
+provider-owned `server-service-sdk` package.
 
 > **Note**
 > Install extras as needed:
@@ -22,7 +27,6 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 > - `pip install service-toolkit[grpc]` for gRPC runtime helpers
 > - `pip install service-toolkit[grpc-codegen]` for `lp-generate-grpc`
 > - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
-> - `pip install service-toolkit[auth]` for JWT/JWKS helpers
 
 ## Usage
 
@@ -99,19 +103,18 @@ async def login(request, payload):
 ```
 
 ```python
-from service_toolkit.auth import build_shared_jwt_verifier
+from auth_service_sdk import build_auth_service_integration
+from service_toolkit.web.app_factory import create_service_app
 
-jwt_verifier = build_shared_jwt_verifier(
-    jwks_url="http://auth-service:8000/auth/.well-known/jwks.json",
-    jwks_ttl_seconds=3600,
-    http_timeout_seconds=5.0,
-    issuer="leavepulse-auth",
-    audience="leavepulse.api",
+auth_integration = build_auth_service_integration(auth_settings=settings.auth)
+
+app = create_service_app(
+    service_name=settings.service_name,
+    openapi_title="Example Service API",
+    route_handlers=[ExampleController],
+    auth_integration=auth_integration,
 )
 ```
-
-`build_shared_jwt_verifier()` reuses one JWKS cache per process/config pair, so
-multiple modules in the same service do not fan out duplicate JWKS refreshes.
 
 If `request.app.stores["main"]` is a Litestar `RedisStore`, counters are stored there using
 an atomic Redis fixed window. When Redis is unavailable, the helper follows

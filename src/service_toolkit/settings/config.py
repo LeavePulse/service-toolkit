@@ -1,7 +1,7 @@
 """Reusable settings classes shared across LeavePulse services.
 
-Provides base classes for common configuration blocks (database, auth, internal
-token, Redis coordination) so that individual services only define their
+Provides base classes for common configuration blocks (database, internal
+token, Redis coordination, gRPC) so that individual services only define their
 service-specific settings.
 
 All classes inherit from :class:`env_settings.BaseSettings` and work with
@@ -36,36 +36,6 @@ class DatabaseSettings(BaseSettings):
             f"@{self.host}:{self.port}/{self.name}"
         )
 
-
-class AuthSettings(BaseSettings):
-    """Auth-service integration settings (JWKS for JWT validation).
-
-    Default ``prefix`` when loading: ``AUTH_``.
-    """
-
-    base_url: str = "http://auth-service:8000"
-    grpc_target: str = "auth-service:50000"
-    jwks_url: str | None = None
-    jwks_cache_ttl_seconds: int = 3600
-    http_timeout_seconds: float = 5.0
-    issuer: str = "leavepulse-auth"
-    audience: str = "leavepulse.api"
-
-    @property
-    def resolved_jwks_url(self) -> str:
-        """Return the JWKS endpoint, derived from ``base_url`` when needed."""
-        if self.jwks_url:
-            return self.jwks_url
-        base = self.base_url.rstrip("/")
-        return f"{base}/auth/.well-known/jwks.json"
-
-    @property
-    def resolved_introspect_url(self) -> str:
-        """Return the token introspection endpoint derived from ``base_url``."""
-        base = self.base_url.rstrip("/")
-        return f"{base}/auth/introspect"
-
-
 class InternalSettings(BaseSettings):
     """Internal service-to-service authentication token.
 
@@ -96,7 +66,6 @@ class GrpcSettings(BaseSettings):
 
 
 __all__ = [
-    "AuthSettings",
     "DatabaseSettings",
     "GrpcSettings",
     "InternalSettings",

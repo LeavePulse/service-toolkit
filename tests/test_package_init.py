@@ -24,8 +24,6 @@ def _reset_modules(*module_names: str) -> Iterator[None]:
 def test_root_package_does_not_eagerly_import_optional_modules() -> None:
     with _reset_modules(
         "service_toolkit",
-        "service_toolkit.auth",
-        "service_toolkit.auth.verifier",
         "service_toolkit.db",
         "service_toolkit.db.litestar",
         "service_toolkit.errors",
@@ -35,43 +33,20 @@ def test_root_package_does_not_eagerly_import_optional_modules() -> None:
         "service_toolkit.state",
         "service_toolkit.state.redis",
         "service_toolkit.web",
-        "service_toolkit.web.auth",
         "service_toolkit.web.app_factory",
     ):
         import service_toolkit
 
         importlib.reload(service_toolkit)
 
-        assert "service_toolkit.auth.verifier" not in sys.modules
         assert "service_toolkit.db.litestar" not in sys.modules
         assert "service_toolkit.errors.awesome_errors" not in sys.modules
         assert "service_toolkit.observability.tracing" not in sys.modules
         assert "service_toolkit.state.redis" not in sys.modules
-        assert "service_toolkit.web.auth" not in sys.modules
         assert "service_toolkit.web.app_factory" not in sys.modules
         assert callable(service_toolkit.build_event)
         assert service_toolkit.HealthController is not None
-        assert "CurrentUser" in dir(service_toolkit)
         assert "service_toolkit.web.app_factory" not in sys.modules
-
-
-def test_auth_package_does_not_eagerly_import_verifier() -> None:
-    with _reset_modules(
-        "service_toolkit.auth",
-        "service_toolkit.auth.jwks",
-        "service_toolkit.auth.schemas",
-        "service_toolkit.auth.types",
-        "service_toolkit.auth.verifier",
-    ):
-        import service_toolkit.auth as auth
-
-        importlib.reload(auth)
-
-        assert "service_toolkit.auth.jwks" not in sys.modules
-        assert "service_toolkit.auth.schemas" not in sys.modules
-        assert "service_toolkit.auth.types" not in sys.modules
-        assert "service_toolkit.auth.verifier" not in sys.modules
-        assert "JWKSCache" in dir(auth)
 
 
 def test_db_package_does_not_eagerly_import_sqlalchemy_helpers() -> None:
