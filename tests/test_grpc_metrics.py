@@ -177,7 +177,7 @@ async def test_client_metrics_interceptor_records_failure() -> None:
 @pytest.mark.asyncio
 async def test_client_metrics_interceptor_records_completed_call_failure() -> None:
     service_name = "grpc_metrics_client_completed_failure"
-    target = "gateway-ingest:50300"
+    target = "agent-gateway:50300"
     grpc_service = "leavepulse.gateway.v1.gatewayteamsyncservice"
     grpc_method = "refreshminecraftsync"
     counter_labels = {

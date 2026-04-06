@@ -149,7 +149,7 @@ def test_close_shared_channels_closes_created_channels(
 
     channel = grpc_channels.build_shared_channel(
         key="test.close",
-        target="gateway-ingest:50300",
+        target="agent-gateway:50300",
     )
 
     async def _use_and_close() -> None:

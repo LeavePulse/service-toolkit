@@ -32,9 +32,9 @@ INTERNAL_SERVICE_NAMES = [
     "billing_service",
     "bot_service",
     "community_service",
-    "gateway_ingest",
+    "agent_gateway",
     "monitoring_service",
-    "realtime_service",
+    "realtime_gateway",
     "server_service",
     "whitelist_service",
 ]
