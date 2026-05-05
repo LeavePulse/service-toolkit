@@ -10,6 +10,7 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
 
@@ -98,14 +99,14 @@ jobs:
 
             const webhookUrl = (process.env.DISCORD_WEBHOOK_URL ?? "").trim();
             if (!webhookUrl) {
-              core.setFailed("DISCORD_WEBHOOK_URL is not configured");
+              core.notice("DISCORD_WEBHOOK_URL is not configured; skipping notification");
               return;
             }
 
             try {
               new URL(webhookUrl);
             } catch {
-              core.setFailed("DISCORD_WEBHOOK_URL is invalid");
+              core.warning("DISCORD_WEBHOOK_URL is invalid; skipping notification");
               return;
             }
 
@@ -142,6 +143,6 @@ jobs:
               }
             }
 
-            core.setFailed(
+            core.warning(
               `Discord commit notification was not delivered after 3 attempts: ${lastFailure}`,
             );

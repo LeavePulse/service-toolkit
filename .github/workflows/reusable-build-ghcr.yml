@@ -30,6 +30,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: build-ghcr-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -38,8 +42,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           submodules: recursive
           token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Validate Docker inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          context_path="${{ inputs.context }}"
+          dockerfile_path="${{ inputs.dockerfile }}"
+
+          if [[ ! -d "$context_path" ]]; then
+            echo "Docker context does not exist: $context_path" >&2
+            exit 1
+          fi
+
+          if [[ ! -f "$dockerfile_path" ]]; then
+            echo "Dockerfile does not exist: $dockerfile_path" >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -84,33 +107,36 @@ jobs:
           tags: |
             type=sha
 
-      - name: Clean stale runner workspace
+      - name: Check existing image tags
+        id: existing
         shell: bash
         run: |
           set -euo pipefail
 
-          workspace_root="${{ runner.workspace }}"
-          current_repo="${{ github.event.repository.name }}"
+          missing=false
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            if ! docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+              missing=true
+              break
+            fi
+          done <<< "${{ steps.meta.outputs.tags }}"
 
-          if [[ -d "$workspace_root" ]]; then
-            find "$workspace_root" -mindepth 1 -maxdepth 1 \
-              ! -name "$current_repo" \
-              ! -name "_actions" \
-              ! -name "_tool" \
-              ! -name "_temp" \
-              ! -name "_PipelineMapping" \
-              -exec rm -rf {} +
+          if [[ "$missing" == "false" ]]; then
+            echo "All image tags already exist; skipping rebuild."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-          df -h
-
       - name: Build and push
+        if: steps.existing.outputs.skip != 'true'
         id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
-          load: true
+          push: true
           provenance: false
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
@@ -119,34 +145,3 @@ jobs:
           cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=min,ignore-error=true
           secrets: | # pragma: allowlist secret
             github_token=${{ secrets.GH_PAT || github.token }} # pragma: allowlist secret
-
-      - name: Push image tags
-        shell: bash
-        env:
-          REGISTRY_PASSWORD: ${{ secrets.GH_PAT || github.token }}
-        run: |
-          set -euo pipefail
-
-          max_attempts=3
-          retry_delay_seconds=5
-
-          printf '%s' "$REGISTRY_PASSWORD" | docker login '${{ env.REGISTRY }}' \
-            --username '${{ github.actor }}' \
-            --password-stdin
-
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] || continue
-            attempt=1
-            while true; do
-              if docker push "$tag"; then
-                break
-              fi
-
-              if [[ "$attempt" -ge "$max_attempts" ]]; then
-                exit 1
-              fi
-
-              sleep "$retry_delay_seconds"
-              attempt=$((attempt + 1))
-            done
-          done <<< "${{ steps.meta.outputs.tags }}"
