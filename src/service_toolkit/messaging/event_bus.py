@@ -62,6 +62,11 @@ class BaseEventBus:
         """Return whether the NATS client is connected."""
         return self._client is not None
 
+    @property
+    def client(self) -> NATSClient | None:
+        """Return the underlying NATS client (or None when disabled)."""
+        return self._client
+
     async def start(self) -> None:
         """Connect to NATS and ensure the JetStream stream exists."""
         if not self.enabled:
