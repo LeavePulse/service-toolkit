@@ -119,8 +119,12 @@ def create_service_app(
     # Lifecycle
     on_startup: Sequence[LifeSpanHandler] = (),
     on_shutdown: Sequence[LifeSpanHandler] = (),
-    # Escape hatch for extra middleware
-    extra_middleware: Sequence[DefineMiddleware] = (),
+    # Escape hatch for extra middleware. ``DefineMiddleware`` works for
+    # classic middleware classes (Litestar will instantiate them with
+    # ``app=...``); ASGI-style middleware instances (subclassing
+    # ``litestar.middleware.base.ASGIMiddleware``) are passed through
+    # to Litestar verbatim.
+    extra_middleware: Sequence[Any] = (),
     # Extra plugins
     extra_plugins: Sequence[Any] = (),
 ) -> Litestar:

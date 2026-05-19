@@ -74,13 +74,18 @@ class _SharedChannelProxy(grpc.aio.Channel):
         )
 
     def _create_channel(self) -> grpc.aio.Channel:
+        from .jwt_forwarding import JwtForwardingClientInterceptor
         from .metrics import GrpcClientMetricsInterceptor
 
         interceptors: list[grpc.aio.ClientInterceptor] = [
             GrpcClientMetricsInterceptor(
                 service_name=self._service_name,
                 target=self._target,
-            )
+            ),
+            # Forwards the caller's user-JWT (when set via set_forwarded_jwt)
+            # into ``authorization`` metadata. No-op when no JWT is bound to
+            # the current task — safe to enable unconditionally.
+            JwtForwardingClientInterceptor(),
         ]
         if self._token is not None:
             from .interceptors import InternalTokenClientInterceptor

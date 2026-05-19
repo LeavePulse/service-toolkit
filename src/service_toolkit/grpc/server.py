@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from grpc_reflection.v1alpha import reflection
+
+if TYPE_CHECKING:
+    from auth_service_sdk import JWTVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +98,7 @@ def build_grpc_lifecycle(
     service_name: str,
     port: int,
     internal_token: str | None = None,
+    jwt_verifier: JWTVerifier[Any] | None = None,
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
     registrars: Sequence[ServiceRegistrar] = (),
@@ -105,6 +110,12 @@ def build_grpc_lifecycle(
 
     *registrars* are callables that receive the ``grpc.aio.Server`` and should
     call ``add_<X>Servicer_to_server(servicer, server)``.
+
+    *jwt_verifier* (optional) — when supplied, installs
+    :class:`~service_toolkit.grpc.jwt_forwarding.JwtContextServerInterceptor`,
+    which decodes the inbound ``authorization`` JWT and exposes it via the
+    ``current_jwt_payload`` contextvar for servicers to consume with their
+    existing permission helpers.
 
     Returns ``(startup, shutdown)`` async callables.
     """
@@ -119,6 +130,11 @@ def build_grpc_lifecycle(
             from .interceptors import InternalTokenInterceptor
 
             interceptors.append(InternalTokenInterceptor(internal_token))
+
+        if jwt_verifier is not None:
+            from .jwt_forwarding import JwtContextServerInterceptor
+
+            interceptors.append(JwtContextServerInterceptor(jwt_verifier))
 
         server = create_grpc_server(
             port=port,
