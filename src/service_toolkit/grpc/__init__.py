@@ -15,6 +15,8 @@ __all__ = [
     "JwtForwardingClientInterceptor",
     "abort_invalid",
     "abort_not_found",
+    "apply_optional_fields",
+    "apply_optional_repeated",
     "build_grpc_lifecycle",
     "build_shared_channel",
     "close_shared_channels",
@@ -22,11 +24,17 @@ __all__ = [
     "current_jwt_payload",
     "db_session",
     "forwarded_jwt",
+    "grpc_call",
     "grpc_error_handler",
+    "optional_bool",
+    "optional_float",
+    "optional_int",
+    "optional_str",
     "reset_forwarded_jwt",
     "set_forwarded_jwt",
     "start_grpc_server",
     "stop_grpc_server",
+    "translate_grpc_error",
 ]
 
 _EXPORT_MODULES = {
@@ -39,6 +47,8 @@ _EXPORT_MODULES = {
     "JwtForwardingClientInterceptor": ".jwt_forwarding",
     "abort_invalid": ".servicer",
     "abort_not_found": ".servicer",
+    "apply_optional_fields": ".calls",
+    "apply_optional_repeated": ".calls",
     "build_grpc_lifecycle": ".server",
     "build_shared_channel": ".channels",
     "close_shared_channels": ".channels",
@@ -46,11 +56,17 @@ _EXPORT_MODULES = {
     "current_jwt_payload": ".jwt_forwarding",
     "db_session": ".servicer",
     "forwarded_jwt": ".jwt_forwarding",
+    "grpc_call": ".calls",
     "grpc_error_handler": ".servicer",
+    "optional_bool": ".calls",
+    "optional_float": ".calls",
+    "optional_int": ".calls",
+    "optional_str": ".calls",
     "reset_forwarded_jwt": ".jwt_forwarding",
     "set_forwarded_jwt": ".jwt_forwarding",
     "start_grpc_server": ".server",
     "stop_grpc_server": ".server",
+    "translate_grpc_error": ".calls",
 }
 
 
