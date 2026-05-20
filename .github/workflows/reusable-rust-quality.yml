@@ -19,12 +19,22 @@ on:
         type: string
         default: ""
       cargo_features:
-        description: Extra `--features` flags forwarded to clippy/test (space-separated).
+        description: Explicit `--features` flags forwarded to clippy/test (space-separated). Takes precedence over `all_features`.
         required: false
         type: string
         default: ""
+      all_features:
+        description: Pass `--all-features` to clippy/test. Off by default because native-dep graphs (rfd/gpui/wry) routinely surface mutually-exclusive features under `--all-features`.
+        required: false
+        type: boolean
+        default: false
       cargo_test_args:
         description: Extra args passed to `cargo test` (e.g. "--workspace --exclude foo").
+        required: false
+        type: string
+        default: "--workspace"
+      clippy_args:
+        description: Extra args appended to the `cargo clippy` invocation before `-- -D warnings` (e.g. "--workspace --exclude foo").
         required: false
         type: string
         default: "--workspace"
@@ -100,24 +110,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          features="${{ inputs.cargo_features }}"
-          if [[ -n "$features" ]]; then
-            cargo clippy --all-targets --features "$features" -- -D warnings
-          else
-            cargo clippy --all-targets --all-features -- -D warnings
+          features_flag=""
+          if [[ -n "${{ inputs.cargo_features }}" ]]; then
+            features_flag="--features ${{ inputs.cargo_features }}"
+          elif [[ "${{ inputs.all_features }}" == "true" ]]; then
+            features_flag="--all-features"
           fi
+          cargo clippy --all-targets ${{ inputs.clippy_args }} $features_flag -- -D warnings
 
       - name: cargo test
         shell: bash
         run: |
           set -euo pipefail
-          features="${{ inputs.cargo_features }}"
-          extra_args="${{ inputs.cargo_test_args }}"
-          if [[ -n "$features" ]]; then
-            cargo test $extra_args --features "$features"
-          else
-            cargo test $extra_args
+          features_flag=""
+          if [[ -n "${{ inputs.cargo_features }}" ]]; then
+            features_flag="--features ${{ inputs.cargo_features }}"
+          elif [[ "${{ inputs.all_features }}" == "true" ]]; then
+            features_flag="--all-features"
           fi
+          cargo test ${{ inputs.cargo_test_args }} $features_flag
 
       - name: Set up Bun
         if: inputs.frontend_dir != ''
