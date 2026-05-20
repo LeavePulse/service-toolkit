@@ -1,0 +1,135 @@
+name: reusable-rust-quality
+
+# Quality gate for Rust workspaces, optionally paired with a Bun/Vite
+# frontend (Tauri apps). Runs `cargo fmt --check`, `cargo clippy -D warnings`,
+# `cargo test`, and — when a frontend path is provided — `bun install`
+# followed by the project's `typecheck` script.
+
+on:
+  workflow_call:
+    inputs:
+      rust_toolchain:
+        description: Rust toolchain channel to install (e.g. "stable", "1.80", "nightly").
+        required: false
+        type: string
+        default: "stable"
+      rust_components:
+        description: Comma-separated extra rustup components beyond rustfmt+clippy.
+        required: false
+        type: string
+        default: ""
+      cargo_features:
+        description: Extra `--features` flags forwarded to clippy/test (space-separated).
+        required: false
+        type: string
+        default: ""
+      cargo_test_args:
+        description: Extra args passed to `cargo test` (e.g. "--workspace --exclude foo").
+        required: false
+        type: string
+        default: "--workspace"
+      frontend_dir:
+        description: Optional path (relative to repo root) to a Bun-managed frontend; runs `bun install` + `bun run typecheck` if set.
+        required: false
+        type: string
+        default: ""
+      frontend_script:
+        description: Bun script to run for the frontend typecheck (defaults to "typecheck").
+        required: false
+        type: string
+        default: "typecheck"
+      apt_packages:
+        description: Extra apt packages required by native crates (space-separated). webkit2gtk/libsoup are added automatically when frontend_dir is set.
+        required: false
+        type: string
+        default: ""
+      submodules:
+        description: Submodule checkout strategy ("true", "recursive", or "false").
+        required: false
+        type: string
+        default: "recursive"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    concurrency:
+      group: rust-quality-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: ${{ inputs.submodules }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages="build-essential pkg-config libssl-dev ${{ inputs.apt_packages }}"
+
+          if [[ -n "${{ inputs.frontend_dir }}" ]]; then
+            # Tauri on Linux pulls in webkit2gtk + libsoup; add them implicitly
+            # whenever a frontend dir is configured so callers don't have to.
+            packages="$packages libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev"
+          fi
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $packages
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+          components: rustfmt, clippy${{ inputs.rust_components != '' && format(', {0}', inputs.rust_components) || '' }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-quality
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          features="${{ inputs.cargo_features }}"
+          if [[ -n "$features" ]]; then
+            cargo clippy --all-targets --features "$features" -- -D warnings
+          else
+            cargo clippy --all-targets --all-features -- -D warnings
+          fi
+
+      - name: cargo test
+        shell: bash
+        run: |
+          set -euo pipefail
+          features="${{ inputs.cargo_features }}"
+          extra_args="${{ inputs.cargo_test_args }}"
+          if [[ -n "$features" ]]; then
+            cargo test $extra_args --features "$features"
+          else
+            cargo test $extra_args
+          fi
+
+      - name: Set up Bun
+        if: inputs.frontend_dir != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Frontend install + typecheck
+        if: inputs.frontend_dir != ''
+        shell: bash
+        working-directory: ${{ inputs.frontend_dir }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run ${{ inputs.frontend_script }}

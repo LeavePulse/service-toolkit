@@ -1,0 +1,164 @@
+name: reusable-tauri-release
+
+# Cross-platform release build for Tauri apps that drive their build through
+# `cargo xtask build <variation>`. Runs a matrix over (runner, variation),
+# uploads the produced artifacts, and — when invoked from a tag push — also
+# attaches them to a GitHub Release.
+#
+# Variations map directly to xtask subcommands. Defaults cover the launcher
+# matrix; callers can override with a JSON array via `variations_json`.
+
+on:
+  workflow_call:
+    inputs:
+      variations_json:
+        description: |
+          JSON array of build targets. Each entry has `name` (xtask variation),
+          `runner` (GitHub runner label), and optional `apt_packages`, `rust_target`,
+          `artifact_glob` (relative to repo root, glob of files to upload).
+        required: false
+        type: string
+        default: |
+          [
+            {"name": "linux",          "runner": "ubuntu-latest", "artifact_glob": "target/x86_64-unknown-linux-gnu/release/leavepulse-launcher"},
+            {"name": "linux-deb",      "runner": "ubuntu-latest", "artifact_glob": "target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb"},
+            {"name": "linux-appimage", "runner": "ubuntu-latest", "artifact_glob": "target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage"},
+            {"name": "win",            "runner": "windows-latest", "rust_target": "x86_64-pc-windows-msvc", "artifact_glob": "target/x86_64-pc-windows-msvc/release/leavepulse-launcher.exe"},
+            {"name": "mac-arm",        "runner": "macos-14",       "rust_target": "aarch64-apple-darwin",   "artifact_glob": "target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"},
+            {"name": "mac-intel",      "runner": "macos-13",       "rust_target": "x86_64-apple-darwin",    "artifact_glob": "target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"}
+          ]
+      rust_toolchain:
+        description: Rust toolchain channel.
+        required: false
+        type: string
+        default: "stable"
+      frontend_dir:
+        description: Path to the Bun-managed frontend directory (so we can `bun install` before xtask runs `bun run build`).
+        required: false
+        type: string
+        default: "launcher-ui-tauri"
+      publish_release:
+        description: Attach artifacts to a GitHub Release. Auto-detected as true when triggered by a tag push; can be forced via workflow_dispatch input.
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: Tag name to publish under. Defaults to `github.ref_name` when triggered by a tag push.
+        required: false
+        type: string
+        default: ""
+      retention_days:
+        description: How long to keep build artifacts on Actions.
+        required: false
+        type: number
+        default: 14
+      submodules:
+        description: Submodule checkout strategy.
+        required: false
+        type: string
+        default: "recursive"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(inputs.variations_json) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: ${{ inputs.submodules }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev"
+          extra="${{ matrix.target.apt_packages }}"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $base $extra
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+          targets: ${{ matrix.target.rust_target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tauri-release-${{ matrix.target.name }}
+
+      - name: Set up Bun
+        if: inputs.frontend_dir != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        if: inputs.frontend_dir != ''
+        shell: bash
+        working-directory: ${{ inputs.frontend_dir }}
+        run: bun install --frozen-lockfile
+
+      - name: Build (${{ matrix.target.name }})
+        shell: bash
+        run: cargo xtask build ${{ matrix.target.name }}
+
+      - name: Upload artifact
+        if: matrix.target.artifact_glob != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: leavepulse-launcher-${{ matrix.target.name }}
+          path: ${{ matrix.target.artifact_glob }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  release:
+    needs: build
+    if: inputs.publish_release || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if [[ -z "$tag" ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ -z "$tag" || "$tag" == "$GITHUB_REF" ]]; then
+            echo "No tag could be resolved (set inputs.release_tag or trigger from a tag push)" >&2
+            exit 1
+          fi
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: artifacts/**/*
