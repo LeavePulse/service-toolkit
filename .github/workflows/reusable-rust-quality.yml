@@ -1,9 +1,9 @@
 name: reusable-rust-quality
 
-# Quality gate for Rust workspaces, optionally paired with a Bun/Vite
-# frontend (Tauri apps). Runs `cargo fmt --check`, `cargo clippy -D warnings`,
-# `cargo test`, and — when a frontend path is provided — `bun install`
-# followed by the project's `typecheck` script.
+# Generic quality gate for Rust workspaces. Runs `cargo fmt --check`,
+# `cargo clippy -D warnings`, and `cargo test`. Nothing about the
+# workflow is bound to a particular UI stack — callers that need a
+# frontend toolchain or Tauri system libs pass them through inputs.
 
 on:
   workflow_call:
@@ -24,7 +24,7 @@ on:
         type: string
         default: ""
       all_features:
-        description: Pass `--all-features` to clippy/test. Off by default because native-dep graphs (rfd/gpui/wry) routinely surface mutually-exclusive features under `--all-features`.
+        description: Pass `--all-features` to clippy/test. Off by default because native-dep graphs routinely surface mutually-exclusive features under `--all-features`.
         required: false
         type: boolean
         default: false
@@ -38,18 +38,17 @@ on:
         required: false
         type: string
         default: "--workspace"
-      frontend_dir:
-        description: Optional path (relative to repo root) to a Bun-managed frontend; runs `bun install` + `bun run typecheck` if set.
+      apt_packages:
+        description: Space-separated apt packages required by the project's native crates. Anything beyond `build-essential pkg-config libssl-dev` (already installed) is up to the caller.
         required: false
         type: string
         default: ""
-      frontend_script:
-        description: Bun script to run for the frontend typecheck (defaults to "typecheck").
-        required: false
-        type: string
-        default: "typecheck"
-      apt_packages:
-        description: Extra apt packages required by native crates (space-separated). webkit2gtk/libsoup are added automatically when frontend_dir is set.
+      pre_cargo_command:
+        description: |
+          Optional shell command run after toolchain setup but before fmt/clippy/test.
+          Use this when crates' build.rs needs side artifacts (e.g. a Bun frontend
+          build that has to populate `dist/` before Tauri's build.rs runs).
+          Executed from the repository root.
         required: false
         type: string
         default: ""
@@ -82,13 +81,6 @@ jobs:
         run: |
           set -euo pipefail
           packages="build-essential pkg-config libssl-dev ${{ inputs.apt_packages }}"
-
-          if [[ -n "${{ inputs.frontend_dir }}" ]]; then
-            # Tauri on Linux pulls in webkit2gtk + libsoup; add them implicitly
-            # whenever a frontend dir is configured so callers don't have to.
-            packages="$packages libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev"
-          fi
-
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends $packages
 
@@ -103,34 +95,10 @@ jobs:
         with:
           shared-key: rust-quality
 
-      # Bun must be set up *before* clippy/test because Tauri crates'
-      # build.rs invokes `bun run build` when `dist/` is missing, and that
-      # runs during `cargo check`/`cargo clippy`. If bun is installed only
-      # at the end, every clippy/test pass on a fresh checkout fails with
-      # "bun: No such file or directory" before reaching any Rust diagnostics.
-      - name: Set up Bun
-        if: inputs.frontend_dir != ''
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Frontend install
-        if: inputs.frontend_dir != ''
+      - name: Pre-cargo setup
+        if: inputs.pre_cargo_command != ''
         shell: bash
-        working-directory: ${{ inputs.frontend_dir }}
-        run: bun install --frozen-lockfile
-
-      - name: Frontend typecheck
-        if: inputs.frontend_dir != ''
-        shell: bash
-        working-directory: ${{ inputs.frontend_dir }}
-        run: bun run ${{ inputs.frontend_script }}
-
-      - name: Frontend build (populate dist/ for Tauri build.rs)
-        if: inputs.frontend_dir != ''
-        shell: bash
-        working-directory: ${{ inputs.frontend_dir }}
-        run: bun run build
+        run: ${{ inputs.pre_cargo_command }}
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
