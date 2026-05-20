@@ -86,7 +86,7 @@ jobs:
           if [[ -n "${{ inputs.frontend_dir }}" ]]; then
             # Tauri on Linux pulls in webkit2gtk + libsoup; add them implicitly
             # whenever a frontend dir is configured so callers don't have to.
-            packages="$packages libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev"
+            packages="$packages libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev"
           fi
 
           sudo apt-get update
@@ -102,6 +102,35 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: rust-quality
+
+      # Bun must be set up *before* clippy/test because Tauri crates'
+      # build.rs invokes `bun run build` when `dist/` is missing, and that
+      # runs during `cargo check`/`cargo clippy`. If bun is installed only
+      # at the end, every clippy/test pass on a fresh checkout fails with
+      # "bun: No such file or directory" before reaching any Rust diagnostics.
+      - name: Set up Bun
+        if: inputs.frontend_dir != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Frontend install
+        if: inputs.frontend_dir != ''
+        shell: bash
+        working-directory: ${{ inputs.frontend_dir }}
+        run: bun install --frozen-lockfile
+
+      - name: Frontend typecheck
+        if: inputs.frontend_dir != ''
+        shell: bash
+        working-directory: ${{ inputs.frontend_dir }}
+        run: bun run ${{ inputs.frontend_script }}
+
+      - name: Frontend build (populate dist/ for Tauri build.rs)
+        if: inputs.frontend_dir != ''
+        shell: bash
+        working-directory: ${{ inputs.frontend_dir }}
+        run: bun run build
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
@@ -129,18 +158,3 @@ jobs:
             features_flag="--all-features"
           fi
           cargo test ${{ inputs.cargo_test_args }} $features_flag
-
-      - name: Set up Bun
-        if: inputs.frontend_dir != ''
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Frontend install + typecheck
-        if: inputs.frontend_dir != ''
-        shell: bash
-        working-directory: ${{ inputs.frontend_dir }}
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile
-          bun run ${{ inputs.frontend_script }}
