@@ -24,35 +24,86 @@ from typing import Any, TypeVar
 
 import grpc
 
-from awesome_errors import (
-    AuthPermissionDeniedError,
-    AuthRequiredError,
-    InvalidInputError,
-    ResourceNotFoundError,
-)
-
 _T = TypeVar("_T")
 
 
-# gRPC StatusCode → awesome-errors exception factory.
-# Each factory accepts (detail, resource, resource_id) and returns an exception.
-_DEFAULT_TRANSLATION: dict[grpc.StatusCode, Any] = {
-    grpc.StatusCode.NOT_FOUND: lambda detail, resource, rid: ResourceNotFoundError(
-        resource or "resource", str(rid) if rid is not None else None
-    ),
-    grpc.StatusCode.INVALID_ARGUMENT: lambda detail, resource, rid: InvalidInputError(
-        detail or "Invalid argument"
-    ),
-    grpc.StatusCode.UNAUTHENTICATED: lambda detail, resource, rid: AuthRequiredError(
-        detail or "Authentication required"
-    ),
-    grpc.StatusCode.PERMISSION_DENIED: lambda detail, resource, rid: AuthPermissionDeniedError(
-        detail or "Insufficient permissions"
-    ),
-    grpc.StatusCode.ALREADY_EXISTS: lambda detail, resource, rid: InvalidInputError(
-        detail or "Resource already exists"
-    ),
-}
+def _resource_label(resource: str | None, resource_id: object = None) -> str:
+    label = resource or "resource"
+    if resource_id is None:
+        return label
+    return f"{label} {resource_id}"
+
+
+def _fallback_not_found(detail: str, resource: str | None, rid: object) -> Exception:
+    return LookupError(detail or f"{_resource_label(resource, rid)} not found")
+
+
+def _fallback_invalid(detail: str, resource: str | None, rid: object) -> Exception:
+    del resource, rid
+    return ValueError(detail or "Invalid argument")
+
+
+def _fallback_auth_required(
+    detail: str,
+    resource: str | None,
+    rid: object,
+) -> Exception:
+    del resource, rid
+    return PermissionError(detail or "Authentication required")
+
+
+def _fallback_permission_denied(
+    detail: str,
+    resource: str | None,
+    rid: object,
+) -> Exception:
+    del resource, rid
+    return PermissionError(detail or "Insufficient permissions")
+
+
+def _fallback_already_exists(
+    detail: str,
+    resource: str | None,
+    rid: object,
+) -> Exception:
+    del resource, rid
+    return ValueError(detail or "Resource already exists")
+
+
+def _default_translation() -> dict[grpc.StatusCode, Any]:
+    try:
+        from awesome_errors import (  # type: ignore[import-not-found]
+            AuthPermissionDeniedError,
+            AuthRequiredError,
+            InvalidInputError,
+            ResourceNotFoundError,
+        )
+    except ModuleNotFoundError:
+        return {
+            grpc.StatusCode.NOT_FOUND: _fallback_not_found,
+            grpc.StatusCode.INVALID_ARGUMENT: _fallback_invalid,
+            grpc.StatusCode.UNAUTHENTICATED: _fallback_auth_required,
+            grpc.StatusCode.PERMISSION_DENIED: _fallback_permission_denied,
+            grpc.StatusCode.ALREADY_EXISTS: _fallback_already_exists,
+        }
+
+    return {
+        grpc.StatusCode.NOT_FOUND: lambda detail, resource, rid: ResourceNotFoundError(
+            resource or "resource", str(rid) if rid is not None else None
+        ),
+        grpc.StatusCode.INVALID_ARGUMENT: lambda detail, resource, rid: InvalidInputError(
+            detail or "Invalid argument"
+        ),
+        grpc.StatusCode.UNAUTHENTICATED: lambda detail, resource, rid: AuthRequiredError(
+            detail or "Authentication required"
+        ),
+        grpc.StatusCode.PERMISSION_DENIED: lambda detail, resource, rid: AuthPermissionDeniedError(
+            detail or "Insufficient permissions"
+        ),
+        grpc.StatusCode.ALREADY_EXISTS: lambda detail, resource, rid: InvalidInputError(
+            detail or "Resource already exists"
+        ),
+    }
 
 
 def translate_grpc_error(
@@ -74,11 +125,11 @@ def translate_grpc_error(
     if extra is not None and code in extra:
         factory = extra[code]
     if factory is None:
-        factory = _DEFAULT_TRANSLATION.get(code)
+        factory = _default_translation().get(code)
     if factory is not None:
         return factory(detail, resource, resource_id)
     msg = detail or f"upstream rejected the request ({code.name})"
-    return InvalidInputError(msg)
+    return _fallback_invalid(msg, resource, resource_id)
 
 
 async def grpc_call(
