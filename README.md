@@ -26,7 +26,7 @@ provider-owned `server-service-sdk` package.
 > - `pip install service-toolkit[nats]` for NATS helpers
 > - `pip install service-toolkit[redis]` for Redis helpers
 > - `pip install service-toolkit[grpc]` for gRPC runtime helpers
-> - `pip install service-toolkit[grpc-codegen]` for `lp-generate-grpc`
+> - `pip install service-toolkit[grpc-codegen]` for `lp-generate-grpc` and `lp-gen-client`
 > - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
 
 ## Usage
@@ -135,6 +135,30 @@ resp = await client.call(
     resource_id=user_id,
 )
 ```
+
+Generated low-level clients can be configured once in a consumer service's
+`pyproject.toml` and regenerated with no CLI arguments:
+
+```toml
+[[tool.service_toolkit.grpc_client_codegen.targets]]
+proto_package = "server_service_grpc.generated.leavepulse.server.v1"
+out_dir = "src/example_service/clients/_generated/server"
+channel_key_prefix = "example.server"
+target_setting = "settings.server.grpc_target"
+timeout_setting = "settings.server.grpc_timeout_seconds"
+token_setting = "settings.internal.token"
+settings_import = "example_service.core.config"
+resource = "server"
+services = ["InternalServerDiscoveryService"]
+```
+
+```bash
+uv run lp-gen-client
+```
+
+For CI or one-off generation without a config file, the same target can be
+provided with `LP_GRPC_CLIENTGEN_*` environment variables. `LP_GRPC_CLIENTGEN_CONFIG`
+can point at a TOML file outside the current directory.
 
 If `request.app.stores["main"]` is a Litestar `RedisStore`, counters are stored there using
 an atomic Redis fixed window. When Redis is unavailable, the helper follows
