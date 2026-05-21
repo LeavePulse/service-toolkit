@@ -27,7 +27,7 @@ grpc = [
     "grpcio-reflection>=1.71.0,<2",
     "protobuf>=5.29.0,<6",
 ]
-grpc-codegen = ["grpcio-tools>=1.71.0,<2"]
+grpc-codegen = ["grpcio-tools>=1.80.0,<2"]
 tracing = [
     "opentelemetry-api>=1.40.0,<2.0.0",
     "opentelemetry-sdk>=1.40.0,<2.0.0",
@@ -58,7 +58,7 @@ dev = [
     "ruff>=0.15.5,<0.16",
     "mypy>=1.18.2,<2",
     "grpcio>=1.71.0,<2",
-    "grpcio-tools>=1.71.0,<2",
+    "grpcio-tools>=1.80.0,<2",
     "grpcio-health-checking>=1.71.0,<2",
     "grpcio-reflection>=1.71.0,<2",
     "protobuf>=5.29.0,<6",
