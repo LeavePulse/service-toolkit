@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from service_toolkit.grpc.calls import apply_present_fields
+from service_toolkit.grpc.calls import apply_present_fields, present_fields
 
 
 class _Unset:
@@ -28,6 +28,17 @@ def test_apply_present_fields_skips_external_unset_and_maps_none() -> None:
     assert request.invite_url == ""
     assert request.enabled is False
     assert request.title == "LeavePulse"
+
+
+def test_present_fields_returns_filtered_values() -> None:
+    assert present_fields(
+        unset_type=_Unset,
+        none_value="",
+        coerce=str,
+        skipped=_Unset(),
+        cleared=None,
+        value=42,
+    ) == {"cleared": "", "value": "42"}
 
 
 def test_apply_present_fields_skips_none_by_default() -> None:

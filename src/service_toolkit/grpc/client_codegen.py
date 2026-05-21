@@ -16,11 +16,12 @@ Usage::
 
     lp-gen-client \
         --proto-package whitelist_service_grpc.generated.leavepulse.whitelist.v1 \
-        --out-file platform-api/src/platform_api/clients/_generated/whitelist_grpc.py \
-        --channel-key platform_api.whitelist \
+        --out-dir platform-api/src/platform_api/clients/_generated/whitelist \
+        --channel-key-prefix platform_api.whitelist \
         --target-setting "settings.whitelist.target" \
         --timeout-setting "settings.whitelist.timeout_seconds" \
-        --token-setting "settings.internal.token"
+        --token-setting "settings.internal.token" \
+        --settings-import platform_api.core.config
 """
 
 from __future__ import annotations
@@ -146,7 +147,11 @@ def _collect_fields(descriptor: Any) -> tuple[_Field, ...]:
     return tuple(fields)
 
 
-def _scan_package(proto_package: str) -> list[_Service]:
+def _scan_package(
+    proto_package: str,
+    *,
+    service_names: set[str] | None = None,
+) -> list[_Service]:
     """Walk every ``*_pb2_grpc`` in the package and extract service info."""
     pkg = importlib.import_module(proto_package)
     if not hasattr(pkg, "__path__"):
@@ -163,6 +168,8 @@ def _scan_package(proto_package: str) -> list[_Service]:
         pb2_module = importlib.import_module(pb2_module_name)
         file_descriptor = pb2_module.DESCRIPTOR
         for service in file_descriptor.services_by_name.values():
+            if service_names is not None and service.name not in service_names:
+                continue
             short_pb2 = pb2_module_name.rsplit(".", 1)[1]
             short_grpc = grpc_module_name.rsplit(".", 1)[1]
             stub_class_name = f"{service.name}Stub"
@@ -204,10 +211,10 @@ def _render_signature(method: _Method) -> str:
     for field in method.fields:
         if field.is_repeated:
             optional.append(f"{field.name}: Iterable[{field.py_type}] = ()")
-        elif field.is_optional:
-            optional.append(f"{field.name}: {field.py_type} | None = None")
         elif field.is_message:
             optional.append(f"{field.name}: Any | None = None")
+        elif field.is_optional:
+            optional.append(f"{field.name}: {field.py_type} | None = None")
         else:
             required.append(f"{field.name}: {field.py_type}")
     grpc_options = [
@@ -234,12 +241,12 @@ def _render_request_build(method: _Method) -> str:
             multi_blocks.append(
                 f"if {field.name}:\n    request.{field.name}.extend({field.name})"
             )
-        elif field.is_optional:
-            optional_kwargs.append(field.name)
         elif field.is_message:
             multi_blocks.append(
                 f"if {field.name} is not None:\n    request.{field.name}.CopyFrom({field.name})"
             )
+        elif field.is_optional:
+            optional_kwargs.append(field.name)
         else:
             plain_kwargs.append(f"{field.name}={field.name}")
 
@@ -281,6 +288,7 @@ def _render_service_module(
     target_setting: str,
     timeout_setting: str,
     token_setting: str,
+    settings_import: str,
     resource: str,
 ) -> str:
     methods_src = "\n\n".join(_render_method(m, resource=resource) for m in service.methods)
@@ -303,9 +311,12 @@ def _render_service_module(
         "import grpc  # noqa: F401",
         "",
         f"from {proto_package} import {service.proto_module}, {service.grpc_module}",
-        "from service_toolkit.grpc import apply_optional_fields, build_grpc_client",
+        "from service_toolkit.grpc import (",
+        "    apply_optional_fields,  # noqa: F401",
+        "    build_grpc_client,",
+        ")",
         "",
-        "from platform_api.core.config import settings",
+        f"from {settings_import} import settings",
         "",
         f"_CHANNEL_KEY = {channel_key!r}",
         "_CLIENT = build_grpc_client(",
@@ -322,6 +333,7 @@ def _render_service_module(
         "",
         "async def close() -> None:",
         "    await _CLIENT.close()",
+        "",
         "",
         "",
     ]
@@ -364,18 +376,36 @@ def _parse_args() -> argparse.Namespace:
         help='Python expression yielding the internal token (default: settings.internal.token).',
     )
     parser.add_argument(
+        "--settings-import",
+        default="platform_api.core.config",
+        help=(
+            "Module path that exports ``settings`` "
+            '(default: "platform_api.core.config").'
+        ),
+    )
+    parser.add_argument(
         "--resource",
         default="resource",
         help='Default ``resource`` label for grpc_call error translation.',
+    )
+    parser.add_argument(
+        "--service",
+        action="append",
+        dest="services",
+        help="Proto service name to generate. May be passed multiple times.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    services = _scan_package(args.proto_package)
+    requested_services = set(args.services or ()) or None
+    services = _scan_package(args.proto_package, service_names=requested_services)
     if not services:
-        msg = f"No gRPC services found in {args.proto_package!r}"
+        suffix = ""
+        if requested_services is not None:
+            suffix = f" matching {sorted(requested_services)!r}"
+        msg = f"No gRPC services found in {args.proto_package!r}{suffix}"
         raise SystemExit(msg)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -388,6 +418,7 @@ def main() -> None:
             target_setting=args.target_setting,
             timeout_setting=args.timeout_setting,
             token_setting=args.token_setting,
+            settings_import=args.settings_import,
             resource=args.resource,
         )
         out_file = args.out_dir / f"{_snake(service.service_name)}_grpc.py"

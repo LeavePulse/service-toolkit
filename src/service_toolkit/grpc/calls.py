@@ -196,6 +196,30 @@ def apply_optional_fields(request: Any, /, **fields: object) -> None:
         setattr(request, name, value)
 
 
+def present_fields(
+    *,
+    unset_type: type[Any] | tuple[type[Any], ...] | None = None,
+    none_value: object = _UNSET,
+    coerce: Callable[[object], object] | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    """Return fields explicitly provided by a PATCH-style caller."""
+    result: dict[str, object] = {}
+    for name, value in fields.items():
+        if value is _UNSET:
+            continue
+        if unset_type is not None and isinstance(value, unset_type):
+            continue
+        if value is None:
+            if none_value is _UNSET:
+                continue
+            value = none_value
+        if coerce is not None:
+            value = coerce(value)
+        result[name] = value
+    return result
+
+
 def apply_present_fields(
     request: Any,
     /,
@@ -211,17 +235,12 @@ def apply_present_fields(
     "absent" sentinel from ``None``. That covers public payloads such as
     ``msgspec.UNSET`` where ``None`` means "clear this field".
     """
-    for name, value in fields.items():
-        if value is _UNSET:
-            continue
-        if unset_type is not None and isinstance(value, unset_type):
-            continue
-        if value is None:
-            if none_value is _UNSET:
-                continue
-            value = none_value
-        if coerce is not None:
-            value = coerce(value)
+    for name, value in present_fields(
+        unset_type=unset_type,
+        none_value=none_value,
+        coerce=coerce,
+        **fields,
+    ).items():
         setattr(request, name, value)
 
 
@@ -263,5 +282,6 @@ __all__ = [
     "optional_int",
     "optional_str",
     "optional_str_from_int",
+    "present_fields",
     "translate_grpc_error",
 ]

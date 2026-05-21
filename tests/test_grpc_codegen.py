@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from service_toolkit.grpc.codegen import _run_protoc
+from service_toolkit.grpc.client_codegen import _Field, _Method, _Service, _render_service_module
 
 
 def test_run_protoc_reports_grpc_codegen_extra(
@@ -33,3 +34,42 @@ def test_run_protoc_reports_grpc_codegen_extra(
             out_dir=tmp_path,
             proto_files=["leavepulse/common/v1/common.proto"],
         )
+
+
+def test_client_codegen_respects_settings_import() -> None:
+    source = _render_service_module(
+        service=_Service(
+            proto_module="example_pb2",
+            grpc_module="example_pb2_grpc",
+            service_name="ExampleService",
+            stub_class="ExampleServiceStub",
+            methods=(
+                _Method(
+                    rpc_name="DoThing",
+                    snake_name="do_thing",
+                    input_type="example_pb2.DoThingRequest",
+                    output_type="example_pb2.DoThingResponse",
+                    fields=(
+                        _Field(
+                            name="server_id",
+                            py_type="int",
+                            is_repeated=False,
+                            is_optional=False,
+                            is_message=False,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        proto_package="example.generated.v1",
+        channel_key="example.service",
+        target_setting="settings.server.grpc_target",
+        timeout_setting="settings.server.grpc_timeout_seconds",
+        token_setting="settings.server.api_token",
+        settings_import="example_service.core.config",
+        resource="example",
+    )
+
+    assert "from example_service.core.config import settings" in source
+    assert "target=settings.server.grpc_target" in source
+    assert "timeout_seconds=settings.server.grpc_timeout_seconds" in source
