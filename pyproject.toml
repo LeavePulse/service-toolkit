@@ -41,6 +41,7 @@ tracing = [
 [project.scripts]
 lp-arch-lint = "service_toolkit.dev.arch_linter:main"
 lp-generate-grpc = "service_toolkit.grpc.codegen:main"
+lp-gen-client = "service_toolkit.grpc.client_codegen:main"
 lp-prometheus-runtime = "service_toolkit.observability.prometheus_runtime:main"
 lp-smoke-test = "service_toolkit.dev.smoke_tester:main"
 

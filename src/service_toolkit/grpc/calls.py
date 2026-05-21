@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import Any, TypeVar
 
 import grpc
@@ -137,6 +138,35 @@ def optional_float(message: Any, field: str) -> float | None:
     return float(getattr(message, field))
 
 
+def optional_dt(message: Any, field: str) -> datetime | None:
+    """Parse an ISO-8601 datetime field, returning ``None`` for absent or unparseable values.
+
+    Services publish timestamps as ISO-8601 strings (proto3 ``string``) rather
+    than ``google.protobuf.Timestamp`` so the wire shape stays stable across
+    language ecosystems. This helper centralises the parse + None-fallback
+    pattern that every consumer was open-coding.
+    """
+    raw = optional_str(message, field)
+    if raw is None or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def optional_str_from_int(message: Any, field: str) -> str | None:
+    """Stringified ``optional_int`` for proto fields whose public model exposes them as ``str``.
+
+    Used when the wire shape is ``optional int64`` (e.g. ``owner_id``) but
+    the public contract carries it as a string (typically because the
+    public id space is larger than 2^63 or uses a different encoding).
+    """
+    if not message.HasField(field):
+        return None
+    return str(getattr(message, field))
+
+
 # ---------------------------------------------------------------------------
 # PATCH-style request builders.
 # ---------------------------------------------------------------------------
@@ -198,8 +228,10 @@ __all__ = [
     "apply_optional_repeated",
     "grpc_call",
     "optional_bool",
+    "optional_dt",
     "optional_float",
     "optional_int",
     "optional_str",
+    "optional_str_from_int",
     "translate_grpc_error",
 ]
