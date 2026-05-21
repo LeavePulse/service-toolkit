@@ -34,7 +34,7 @@ tracing = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.40.0,<2.0.0",
     "opentelemetry-instrumentation-asgi>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-httpx>=0.49b0,<1.0.0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.49b0,<1.0.0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.62b0,<1.0.0",
     "opentelemetry-instrumentation-redis>=0.49b0,<1.0.0",
 ]
 
