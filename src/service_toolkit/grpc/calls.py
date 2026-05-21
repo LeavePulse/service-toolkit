@@ -18,7 +18,7 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, TypeVar
 
@@ -196,6 +196,35 @@ def apply_optional_fields(request: Any, /, **fields: object) -> None:
         setattr(request, name, value)
 
 
+def apply_present_fields(
+    request: Any,
+    /,
+    *,
+    unset_type: type[Any] | tuple[type[Any], ...] | None = None,
+    none_value: object = _UNSET,
+    coerce: Callable[[object], object] | None = None,
+    **fields: object,
+) -> None:
+    """Set fields that were explicitly provided by a PATCH-style caller.
+
+    Unlike ``apply_optional_fields``, this helper can distinguish an external
+    "absent" sentinel from ``None``. That covers public payloads such as
+    ``msgspec.UNSET`` where ``None`` means "clear this field".
+    """
+    for name, value in fields.items():
+        if value is _UNSET:
+            continue
+        if unset_type is not None and isinstance(value, unset_type):
+            continue
+        if value is None:
+            if none_value is _UNSET:
+                continue
+            value = none_value
+        if coerce is not None:
+            value = coerce(value)
+        setattr(request, name, value)
+
+
 def apply_optional_repeated(
     request: Any,
     field: str,
@@ -226,6 +255,7 @@ def apply_optional_repeated(
 __all__ = [
     "apply_optional_fields",
     "apply_optional_repeated",
+    "apply_present_fields",
     "grpc_call",
     "optional_bool",
     "optional_dt",

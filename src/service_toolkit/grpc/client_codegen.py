@@ -210,7 +210,12 @@ def _render_signature(method: _Method) -> str:
             optional.append(f"{field.name}: Any | None = None")
         else:
             required.append(f"{field.name}: {field.py_type}")
-    parts = ["*"] + required + optional
+    grpc_options = [
+        "grpc_resource: str | None = None",
+        "grpc_resource_id: object = None",
+        "grpc_extra_errors: Mapping[grpc.StatusCode, Any] | None = None",
+    ]
+    parts = ["*"] + required + optional + grpc_options
     return ", ".join(parts)
 
 
@@ -258,11 +263,12 @@ def _render_method(method: _Method, *, resource: str) -> str:
     return (
         f"async def {method.snake_name}({sig}) -> {method.output_type}:\n"
         f"{indented_body}\n"
-        f"    return await grpc_call(\n"
+        f"    return await _CLIENT.call(\n"
         f'        _STUBS["{method.rpc_name}"],\n'
         f"        request,\n"
-        f"        timeout=_timeout(),\n"
-        f"        resource={resource!r},\n"
+        f"        resource=grpc_resource if grpc_resource is not None else {resource!r},\n"
+        f"        resource_id=grpc_resource_id,\n"
+        f"        extra_errors=grpc_extra_errors,\n"
         f"    )\n"
     )
 
@@ -291,37 +297,31 @@ def _render_service_module(
         "",
         "from __future__ import annotations",
         "",
-        "from collections.abc import Iterable  # noqa: F401",
+        "from collections.abc import Iterable, Mapping  # noqa: F401",
         "from typing import Any  # noqa: F401",
         "",
+        "import grpc  # noqa: F401",
+        "",
         f"from {proto_package} import {service.proto_module}, {service.grpc_module}",
-        "from service_toolkit.grpc import (",
-        "    apply_optional_fields,",
-        "    build_shared_channel,",
-        "    close_shared_channels,",
-        "    grpc_call,",
-        ")",
+        "from service_toolkit.grpc import apply_optional_fields, build_grpc_client",
         "",
         "from platform_api.core.config import settings",
         "",
         f"_CHANNEL_KEY = {channel_key!r}",
-        "_CHANNEL = build_shared_channel(",
+        "_CLIENT = build_grpc_client(",
         "    key=_CHANNEL_KEY,",
         f"    target={target_setting},",
         f"    token={token_setting},",
+        f"    timeout_seconds={timeout_setting},",
         ")",
-        f"_STUB = {service.grpc_module}.{service.stub_class}(_CHANNEL)",
+        f"_STUB = _CLIENT.stub({service.grpc_module}.{service.stub_class})",
         "_STUBS = {",
         f"    {stub_lookups},",
         "}",
         "",
         "",
-        "def _timeout() -> float:",
-        f"    return {timeout_setting}",
-        "",
-        "",
         "async def close() -> None:",
-        "    await close_shared_channels(_CHANNEL_KEY)",
+        "    await _CLIENT.close()",
         "",
         "",
     ]

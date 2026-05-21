@@ -8,6 +8,7 @@ import sys
 __all__ = [
     "GrpcClientMetricsInterceptor",
     "GrpcServerMetricsInterceptor",
+    "GrpcClient",
     "InternalTokenCallCredentials",
     "InternalTokenClientInterceptor",
     "InternalTokenInterceptor",
@@ -17,6 +18,8 @@ __all__ = [
     "abort_not_found",
     "apply_optional_fields",
     "apply_optional_repeated",
+    "apply_present_fields",
+    "build_grpc_client",
     "build_grpc_lifecycle",
     "build_shared_channel",
     "close_shared_channels",
@@ -42,6 +45,7 @@ __all__ = [
 _EXPORT_MODULES = {
     "GrpcClientMetricsInterceptor": ".metrics",
     "GrpcServerMetricsInterceptor": ".metrics",
+    "GrpcClient": ".client",
     "InternalTokenCallCredentials": ".interceptors",
     "InternalTokenClientInterceptor": ".interceptors",
     "InternalTokenInterceptor": ".interceptors",
@@ -51,6 +55,8 @@ _EXPORT_MODULES = {
     "abort_not_found": ".servicer",
     "apply_optional_fields": ".calls",
     "apply_optional_repeated": ".calls",
+    "apply_present_fields": ".calls",
+    "build_grpc_client": ".client",
     "build_grpc_lifecycle": ".server",
     "build_shared_channel": ".channels",
     "close_shared_channels": ".channels",

@@ -12,6 +12,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - A lightweight async NATS client wrapper (`NATSClient`) with convenience configuration.
 - Redis-backed request rate limiting helpers with explicit failure policies (`enforce_request_rate_limit`, `rate_limited_request`).
 - Unified local/Redis/hybrid lookup cache with TTL, in-flight deduplication, and Redis fallback policies (`LookupCache`).
+- gRPC client/server helpers: shared channels, default timeouts, metrics/JWT/internal-token interceptors, error translation, and proto optional-field utilities.
 - (Extensible) space for other shared service utilities.
 
 `service-toolkit` no longer owns provider contracts or provider-specific DX.
@@ -113,6 +114,25 @@ app = create_service_app(
     openapi_title="Example Service API",
     route_handlers=[ExampleController],
     auth_integration=auth_integration,
+)
+```
+
+```python
+from service_toolkit.grpc import build_grpc_client
+
+client = build_grpc_client(
+    key="example.auth",
+    target=settings.auth.grpc_target,
+    token=settings.internal.token,
+    timeout_seconds=settings.auth.timeout_seconds,
+)
+users = client.stub(users_pb2_grpc.UsersServiceStub)
+
+resp = await client.call(
+    users.GetContact,
+    users_pb2.GetContactRequest(user_id=user_id),
+    resource="user",
+    resource_id=user_id,
 )
 ```
 
