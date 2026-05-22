@@ -241,7 +241,7 @@ def check_file(file_path: Path, current_service: Optional[str]) -> list[str]:
 
 
 def check_observability(search_root: Path) -> list[str]:
-    errors = []
+    errors: list[str] = []
     content_combined = ""
     for py_file in search_root.rglob("*.py"):
         if any(part in IGNORE_PATHS for part in py_file.parts):

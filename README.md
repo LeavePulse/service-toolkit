@@ -235,3 +235,14 @@ Run tests with:
 ```bash
 uv run pytest
 ```
+
+Run the same Python quality gate as the shared `code-quality.yml` workflow:
+
+```bash
+uv run lp-ci
+```
+
+`lp-ci` runs `uv sync --locked --no-sources`, Ruff, `lp-arch-lint`, MyPy,
+Bandit, detect-secrets, and Pytest. Services can override paths or skips in
+`[tool.service_toolkit.ci]`, or use flags such as `--no-sync` for an already
+synced local environment.

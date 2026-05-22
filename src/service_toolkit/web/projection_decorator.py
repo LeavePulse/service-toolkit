@@ -6,7 +6,7 @@ from functools import wraps
 from inspect import Parameter as SignatureParameter
 from inspect import isawaitable, signature
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from litestar.params import Parameter
 
@@ -125,7 +125,7 @@ def with_projection(
                 return await result
             return result
 
-        wrapper.__signature__ = wrapped_signature
+        cast(Any, wrapper).__signature__ = wrapped_signature
         wrapper.__annotations__ = {
             **getattr(fn, "__annotations__", {}),
             "fields": str | None,
