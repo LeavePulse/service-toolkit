@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess  # nosec B404
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,7 @@ _DEFAULT_SECRET_EXCLUDE = (
     r"alembic/versions|tests?)/"
 )
 _SECRET_REPORT = ".secrets.scan.json"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,13 +247,10 @@ def _format_command(command: tuple[str, ...]) -> str:
     return " ".join(command)
 
 
-def _emit(message: str = "") -> None:
-    sys.stdout.write(f"{message}\n")
-
-
 def _run_step(step: _Step, *, dry_run: bool) -> None:
-    _emit(f"\n==> {step.name}")
-    _emit(_format_command(step.command))
+    logger.info("")
+    logger.info("==> %s", step.name)
+    logger.info("%s", _format_command(step.command))
     if dry_run:
         return
     if step.stdout_path is None:
@@ -268,13 +266,13 @@ def _summarize_secret_report(path: Path = Path(_SECRET_REPORT)) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     results = data.get("results", {})
     if not isinstance(results, dict):
-        _emit("detect-secrets findings: 0")
+        logger.info("detect-secrets findings: 0")
         return
     total = sum(len(items) for items in results.values() if isinstance(items, list))
-    _emit(f"detect-secrets findings: {total}")
+    logger.info("detect-secrets findings: %s", total)
     for item_path, items in results.items():
         if isinstance(items, list) and items:
-            _emit(f"- {item_path}: {len(items)}")
+            logger.info("- %s: %s", item_path, len(items))
 
 
 def run_ci(argv: list[str] | None = None) -> int:
@@ -288,6 +286,7 @@ def run_ci(argv: list[str] | None = None) -> int:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         raise SystemExit(run_ci())
     except subprocess.CalledProcessError as exc:
