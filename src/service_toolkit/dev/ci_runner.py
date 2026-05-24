@@ -20,7 +20,7 @@ _DEFAULT_SECRET_EXCLUDE = (
     r"(^|/)(node_modules|\.venv|venv|dist|build|\.git|migrations|"
     r"alembic/versions|tests?)/"
 )
-_SECRET_REPORT = ".secrets.scan.json"
+_SECRET_REPORT = ".secrets.scan.local.json"
 logger = logging.getLogger(__name__)
 
 
