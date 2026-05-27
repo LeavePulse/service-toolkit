@@ -29,7 +29,7 @@ env:
 
 jobs:
   build:
-    runs-on: ${{ fromJSON(vars.CI_HEAVY_RUNNER || vars.CI_DEFAULT_RUNNER || '["ubuntu-latest"]') }}
+    runs-on: [self-hosted, Linux, X64, ci-heavy]
     timeout-minutes: 45
     concurrency:
       group: build-ghcr-${{ github.repository }}-${{ github.ref }}
