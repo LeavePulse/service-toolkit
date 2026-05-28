@@ -218,6 +218,33 @@ def optional_str_from_int(message: Any, field: str) -> str | None:
     return str(getattr(message, field))
 
 
+def message_has_field(message: Any, field: str) -> bool:
+    """Return whether ``field`` exists in the message's proto descriptor.
+
+    Unlike ``HasField`` (which checks whether an *existing* optional field is
+    set and raises ``ValueError`` for unknown fields), this checks the schema
+    itself. Use it before reading a field from a value that may be one of
+    several proto types with differing field sets.
+    """
+    descriptor = getattr(message, "DESCRIPTOR", None)
+    if descriptor is None:
+        return False
+    return field in descriptor.fields_by_name
+
+
+def optional_str_if_present(message: Any, field: str) -> str | None:
+    """Like ``optional_str`` but tolerant of messages that lack the field.
+
+    Returns ``None`` when the field is absent from the proto descriptor, so a
+    single mapper can read optional fields across heterogeneous card protos
+    (e.g. a rich card type that carries icons vs. a lean one that does not)
+    without guarding each call site.
+    """
+    if not message_has_field(message, field):
+        return None
+    return optional_str(message, field)
+
+
 # ---------------------------------------------------------------------------
 # PATCH-style request builders.
 # ---------------------------------------------------------------------------
@@ -327,12 +354,14 @@ __all__ = [
     "apply_optional_repeated",
     "apply_present_fields",
     "grpc_call",
+    "message_has_field",
     "optional_bool",
     "optional_dt",
     "optional_float",
     "optional_int",
     "optional_str",
     "optional_str_from_int",
+    "optional_str_if_present",
     "present_fields",
     "translate_grpc_error",
 ]
