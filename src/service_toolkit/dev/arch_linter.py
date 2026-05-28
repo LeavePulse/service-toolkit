@@ -251,11 +251,18 @@ def check_observability(search_root: Path) -> list[str]:
     if re.search(r"\bcreate_service_app\s*\(", content_combined):
         return errors
 
+    # A route path counts when it is registered via Litestar (`.get`/`.route`),
+    # served through the shared HealthController, exposed via
+    # build_prometheus_instrumentation, or matched by a stdlib HTTP handler
+    # (`self.path == "/health"`, membership in a set, etc.). The last form lets
+    # non-Litestar processes such as the Discord bot satisfy the contract with
+    # their lightweight health server.
     markers = [
         (
             [
                 r'(\.get\(|\.route\()\s*[\'"]\/metrics[\'"]',
                 r"build_prometheus_instrumentation\s*\(",
+                r'[\'"]\/metrics[\'"]',
             ],
             "Prometheus /metrics",
         ),
@@ -263,6 +270,7 @@ def check_observability(search_root: Path) -> list[str]:
             [
                 r'(\.get\(|\.route\()\s*[\'"]\/health[\'"]',
                 r"\bHealthController\b",
+                r'[\'"]\/health[\'"]',
             ],
             "Health /health",
         ),
@@ -270,6 +278,7 @@ def check_observability(search_root: Path) -> list[str]:
             [
                 r'(\.get\(|\.route\()\s*[\'"]\/ready[\'"]',
                 r"\bHealthController\b",
+                r'[\'"]\/ready[\'"]',
             ],
             "Readiness /ready",
         ),
