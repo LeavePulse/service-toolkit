@@ -1,11 +1,25 @@
-"""Local runner for the shared Python service CI quality gate."""
+"""Local runner for the shared Python service CI quality gate.
+
+Mirrors the ``code-quality`` GitHub workflow so the exact same checks can be
+run locally and from a pre-commit hook. Unlike a naive shell script it:
+
+* runs every step even when an earlier one fails, then reports a single
+  summary table with per-step status and timing;
+* treats ``detect-secrets`` findings as a real failure (honouring an optional
+  ``.secrets.baseline`` for known false positives such as ``secrets: inherit``);
+* supports a ``--changed`` mode that limits source-path steps to files changed
+  against a base ref, for fast pre-commit feedback.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import os
 import subprocess  # nosec B404
+import sys
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +35,44 @@ _DEFAULT_SECRET_EXCLUDE = (
     r"alembic/versions|tests?)/"
 )
 _SECRET_REPORT = ".secrets.scan.local.json"
+_SECRET_BASELINE = ".secrets.baseline"
+_DEFAULT_CHANGED_BASE = "HEAD"
 logger = logging.getLogger(__name__)
+
+
+def _supports_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return sys.stderr.isatty()
+
+
+class _Palette:
+    """ANSI colour codes, disabled transparently when output is not a TTY."""
+
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
+
+    def _wrap(self, code: str, text: str) -> str:
+        if not self._enabled:
+            return text
+        return f"\033[{code}m{text}\033[0m"
+
+    def green(self, text: str) -> str:
+        return self._wrap("32", text)
+
+    def red(self, text: str) -> str:
+        return self._wrap("31", text)
+
+    def yellow(self, text: str) -> str:
+        return self._wrap("33", text)
+
+    def dim(self, text: str) -> str:
+        return self._wrap("2", text)
+
+    def bold(self, text: str) -> str:
+        return self._wrap("1", text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +80,15 @@ class _Step:
     name: str
     command: tuple[str, ...]
     stdout_path: Path | None = None
+    is_secret_scan: bool = False
+
+
+@dataclass(slots=True)
+class _StepResult:
+    name: str
+    status: str  # "ok" | "fail" | "skip"
+    duration: float = 0.0
+    detail: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +105,7 @@ class _CiConfig:
     bandit_skip: str
     bandit_exclude: str
     secret_exclude: str
+    changed_base: str | None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -84,6 +145,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--bandit-exclude",
         help=f"Comma-separated bandit exclude paths. Default: {_DEFAULT_BANDIT_EXCLUDE}.",
+    )
+    parser.add_argument(
+        "--changed",
+        nargs="?",
+        const=_DEFAULT_CHANGED_BASE,
+        dest="changed_base",
+        metavar="BASE_REF",
+        help=(
+            "Limit ruff/mypy to source files changed against BASE_REF "
+            f"(default {_DEFAULT_CHANGED_BASE}). Other steps still run in full."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -156,11 +228,37 @@ def _config_from_args(args: argparse.Namespace) -> _CiConfig:
             or _DEFAULT_BANDIT_EXCLUDE
         ),
         secret_exclude=str(raw.get("secret_exclude") or _DEFAULT_SECRET_EXCLUDE),
+        changed_base=getattr(args, "changed_base", None),
     )
 
 
 def _existing_paths(paths: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(path for path in paths if Path(path).exists())
+
+
+def _changed_python_files(base_ref: str, roots: tuple[str, ...]) -> tuple[str, ...]:
+    """Return tracked + staged ``*.py`` files under ``roots`` changed vs base_ref."""
+    try:
+        diff = subprocess.run(  # nosec B603 B607
+            ("git", "diff", "--name-only", "--diff-filter=ACMR", base_ref),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ()
+    root_paths = tuple(Path(root) for root in roots)
+    changed: list[str] = []
+    for line in diff.stdout.splitlines():
+        name = line.strip()
+        if not name.endswith(".py"):
+            continue
+        candidate = Path(name)
+        if not candidate.exists():
+            continue
+        if any(root in candidate.parents or root == candidate for root in root_paths):
+            changed.append(name)
+    return tuple(changed)
 
 
 def _build_steps(config: _CiConfig) -> list[_Step]:
@@ -169,16 +267,28 @@ def _build_steps(config: _CiConfig) -> list[_Step]:
         msg = f"No source paths found from: {', '.join(config.source_paths)}"
         raise SystemExit(msg)
 
+    lint_targets = sources
+    if config.changed_base is not None:
+        changed = _changed_python_files(config.changed_base, sources)
+        # No changed files → nothing to lint incrementally; keep full sources for
+        # the non-incremental steps but skip ruff/mypy targets entirely.
+        lint_targets = changed or ()
+
     steps: list[_Step] = []
     if config.sync:
-        steps.append(_Step("Install dependencies", ("uv", "sync", "--locked", "--no-sources")))
+        steps.append(
+            _Step("Install dependencies", ("uv", "sync", "--locked", "--no-sources"))
+        )
 
-    steps.append(_Step("Ruff", ("uv", "run", "ruff", "check", *sources)))
+    if config.changed_base is None or lint_targets:
+        ruff_targets = lint_targets if config.changed_base is not None else sources
+        steps.append(_Step("Ruff", ("uv", "run", "ruff", "check", *ruff_targets)))
 
     if config.run_arch_lint:
         steps.append(_Step("Architecture Linter", ("uv", "run", "lp-arch-lint", *sources)))
 
-    if config.run_mypy:
+    if config.run_mypy and (config.changed_base is None or lint_targets):
+        mypy_targets = lint_targets if config.changed_base is not None else sources
         steps.append(
             _Step(
                 "MyPy",
@@ -190,7 +300,7 @@ def _build_steps(config: _CiConfig) -> list[_Step]:
                     "mypy",
                     "--ignore-missing-imports",
                     "--check-untyped-defs",
-                    *sources,
+                    *mypy_targets,
                 ),
             )
         )
@@ -233,6 +343,7 @@ def _build_steps(config: _CiConfig) -> list[_Step]:
                     config.secret_exclude,
                 ),
                 stdout_path=Path(_SECRET_REPORT),
+                is_secret_scan=True,
             )
         )
 
@@ -247,50 +358,152 @@ def _format_command(command: tuple[str, ...]) -> str:
     return " ".join(command)
 
 
-def _run_step(step: _Step, *, dry_run: bool) -> None:
-    logger.info("")
-    logger.info("==> %s", step.name)
-    logger.info("%s", _format_command(step.command))
-    if dry_run:
-        return
-    if step.stdout_path is None:
-        subprocess.run(step.command, check=True)  # nosec B603
-        return
-    with step.stdout_path.open("w", encoding="utf-8") as out:
-        subprocess.run(step.command, check=True, stdout=out)  # nosec B603
-
-
-def _summarize_secret_report(path: Path = Path(_SECRET_REPORT)) -> None:
+def _load_baseline_hashes(path: Path = Path(_SECRET_BASELINE)) -> set[str]:
+    """Hashes of secrets explicitly accepted in ``.secrets.baseline``."""
     if not path.exists():
-        return
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    results = data.get("results", {})
+    if not isinstance(results, dict):
+        return set()
+    hashes: set[str] = set()
+    for items in results.values():
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                digest = item.get("hashed_secret")
+                if isinstance(digest, str):
+                    hashes.add(digest)
+    return hashes
+
+
+def _evaluate_secret_report(path: Path = Path(_SECRET_REPORT)) -> tuple[int, str]:
+    """Return (unbaselined_finding_count, human_summary) for the scan report."""
+    if not path.exists():
+        return 0, "no report"
     data = json.loads(path.read_text(encoding="utf-8"))
     results = data.get("results", {})
     if not isinstance(results, dict):
-        logger.info("detect-secrets findings: 0")
-        return
-    total = sum(len(items) for items in results.values() if isinstance(items, list))
-    logger.info("detect-secrets findings: %s", total)
+        return 0, "0 findings"
+    baseline = _load_baseline_hashes()
+    total = 0
+    unbaselined = 0
+    per_file: list[str] = []
     for item_path, items in results.items():
-        if isinstance(items, list) and items:
-            logger.info("- %s: %s", item_path, len(items))
+        if not isinstance(items, list) or not items:
+            continue
+        total += len(items)
+        flagged = [
+            item
+            for item in items
+            if not (
+                isinstance(item, dict)
+                and item.get("hashed_secret") in baseline
+            )
+        ]
+        if flagged:
+            unbaselined += len(flagged)
+            per_file.append(f"{item_path}: {len(flagged)}")
+    if total == 0:
+        return 0, "0 findings"
+    baselined = total - unbaselined
+    summary = f"{unbaselined} new finding(s)"
+    if baselined:
+        summary += f" ({baselined} baselined)"
+    if per_file:
+        summary += " — " + "; ".join(per_file)
+    return unbaselined, summary
+
+
+def _run_step(step: _Step, *, dry_run: bool, palette: _Palette) -> _StepResult:
+    logger.info("")
+    logger.info("%s %s", palette.bold("==>"), palette.bold(step.name))
+    logger.info("%s", palette.dim(_format_command(step.command)))
+    if dry_run:
+        return _StepResult(step.name, "skip", detail="dry-run")
+
+    start = time.monotonic()
+    if step.stdout_path is None:
+        completed = subprocess.run(step.command, check=False)  # nosec B603
+        duration = time.monotonic() - start
+        if completed.returncode != 0:
+            return _StepResult(
+                step.name, "fail", duration, f"exit {completed.returncode}"
+            )
+        return _StepResult(step.name, "ok", duration)
+
+    with step.stdout_path.open("w", encoding="utf-8") as out:
+        completed = subprocess.run(  # nosec B603
+            step.command, check=False, stdout=out
+        )
+    duration = time.monotonic() - start
+    if completed.returncode != 0:
+        return _StepResult(
+            step.name, "fail", duration, f"exit {completed.returncode}"
+        )
+
+    if step.is_secret_scan:
+        findings, summary = _evaluate_secret_report(step.stdout_path)
+        logger.info("detect-secrets: %s", summary)
+        if findings > 0:
+            return _StepResult(step.name, "fail", duration, summary)
+        return _StepResult(step.name, "ok", duration, summary)
+
+    return _StepResult(step.name, "ok", duration)
+
+
+def _render_summary(results: list[_StepResult], palette: _Palette) -> None:
+    if not results:
+        return
+    name_width = max(len(r.name) for r in results)
+    logger.info("")
+    logger.info("%s", palette.bold("CI summary"))
+    logger.info("%s", palette.dim("-" * (name_width + 22)))
+    for result in results:
+        if result.status == "ok":
+            mark = palette.green("✓ pass")
+        elif result.status == "fail":
+            mark = palette.red("✗ fail")
+        else:
+            mark = palette.yellow("• skip")
+        timing = f"{result.duration:6.2f}s" if result.duration else "      "
+        detail = palette.dim(f"  {result.detail}") if result.detail else ""
+        logger.info(
+            "  %s  %-*s  %s%s",
+            mark,
+            name_width,
+            result.name,
+            palette.dim(timing),
+            detail,
+        )
+    logger.info("%s", palette.dim("-" * (name_width + 22)))
 
 
 def run_ci(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     config = _config_from_args(args)
+    palette = _Palette(enabled=_supports_color())
+    results: list[_StepResult] = []
     for step in _build_steps(config):
-        _run_step(step, dry_run=bool(args.dry_run))
-        if step.stdout_path is not None and not args.dry_run:
-            _summarize_secret_report(step.stdout_path)
+        results.append(_run_step(step, dry_run=bool(args.dry_run), palette=palette))
+
+    _render_summary(results, palette)
+    failures = [r for r in results if r.status == "fail"]
+    if failures:
+        names = ", ".join(r.name for r in failures)
+        logger.error("%s", palette.red(f"CI gate failed: {names}"))
+        return 1
+    logger.info("%s", palette.green("CI gate passed"))
     return 0
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    try:
-        raise SystemExit(run_ci())
-    except subprocess.CalledProcessError as exc:
-        raise SystemExit(exc.returncode) from exc
+    raise SystemExit(run_ci())
 
 
 if __name__ == "__main__":
