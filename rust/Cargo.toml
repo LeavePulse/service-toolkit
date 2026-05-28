@@ -1,0 +1,30 @@
+[package]
+name = "service-toolkit-rust"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "service_toolkit_rust"
+# cdylib: PyO3 extension module built by maturin for the 3 Python consumers.
+# rlib:   plain Rust linkage for Rust consumers (e.g. server-poller).
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Default build serves the existing Python extension (motd/segments/scoring/
+# text/import_resolve), keeping the 3 Python consumers working.
+default = ["python"]
+# pyo3 bindings without the extension-module link flag, so the crate still
+# builds as a plain rlib / for `cargo test`.
+python = ["dep:pyo3"]
+# maturin layers this on top of `python` to produce the importable .so.
+extension-module = ["pyo3/extension-module"]
+# gRPC client helpers for Rust consumers (no Python dependency).
+grpc = ["dep:tonic", "dep:prost", "dep:tonic-types"]
+
+[dependencies]
+regex = "1"
+unicode-normalization = "0.1"
+pyo3 = { version = "0.28", optional = true }
+tonic = { version = "0.12", optional = true }
+prost = { version = "0.13", optional = true }
+tonic-types = { version = "0.12", optional = true }

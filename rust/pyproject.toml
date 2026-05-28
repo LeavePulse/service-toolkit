@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "service-toolkit-rust"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.maturin]
+# Default `python` feature plus the extension-module link flag. Built into the
+# importable `service_toolkit_rust` module (replaces the old leavepulse_core).
+features = ["python", "pyo3/extension-module"]

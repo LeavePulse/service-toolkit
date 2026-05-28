@@ -14,6 +14,12 @@ dependencies = [
 [project.optional-dependencies]
 env = ["env-settings @ git+https://github.com/THEROER/env-settings"]
 nats = ["nats-py>=2.14.0,<3"]
+# Native PyO3 helpers (motd/segments/scoring/text/import_resolve), built from
+# the rust/ crate in this repo. Only the 3 services that import them pull this
+# extra; the rest avoid the Rust toolchain entirely. Replaces leavepulse-core.
+rust = [
+    "service-toolkit-rust @ git+https://github.com/LeavePulse/service-toolkit.git#subdirectory=rust",
+]
 redis = [
     "redis>=7.3.0,<8.0.0",
     "msgspec>=0.20.0,<0.21",
