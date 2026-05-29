@@ -78,6 +78,9 @@ _BEARER_SECURITY_SCHEME = SecurityScheme(
     description="Enter JWT in the format 'Bearer <token>'.",
 )
 
+#: Security requirement applied per-operation to authenticated routes.
+_BEARER_SECURITY_REQUIREMENT = [{"BearerAuth": ["openid"]}]
+
 
 def create_service_app(
     *,
@@ -222,10 +225,16 @@ def create_service_app(
         "path": "/docs",
     }
     if auth_integration is not None:
+        # Declare the scheme, but DON'T set a document-level ``security``.
+        # A global requirement applies to every operation and cannot be
+        # cleared per-route (Litestar #4016: route-level ``security=[]`` is
+        # dropped by ``resolve_security() or None``), so public routes would
+        # wrongly render as "auth required" in Scalar/Swagger. Instead we
+        # stamp the requirement onto each authenticated handler below, leaving
+        # ``exclude_from_auth`` routes genuinely open in the schema.
         openapi_kwargs["components"] = Components(
             security_schemes={"BearerAuth": _BEARER_SECURITY_SCHEME}
         )
-        openapi_kwargs["security"] = [{"BearerAuth": ["openid"]}]
     openapi_config = OpenAPIConfig(**openapi_kwargs)
 
     # ── CORS ─────────────────────────────────────────────────────────
@@ -258,7 +267,49 @@ def create_service_app(
 
     apply_problem_details(app, service_name=service_name)
 
+    if auth_integration is not None:
+        _stamp_handler_security(app)
+
     return app
+
+
+def _stamp_handler_security(app: Litestar) -> None:
+    """Apply the bearer requirement to every authenticated route handler.
+
+    Walks the registered HTTP handlers and sets an operation-level
+    ``security`` on each one that is *not* marked ``exclude_from_auth``.
+    Public handlers are left untouched so they render without an auth
+    requirement in the OpenAPI document. This is the inverse of a global
+    requirement and side-steps Litestar #4016 (route-level ``security=[]``
+    being dropped), since we never declare a document-level ``security``.
+    """
+    from litestar._openapi.plugin import OpenAPIPlugin
+    from litestar.handlers import HTTPRouteHandler
+    from litestar.types import Empty
+
+    skip_methods = {"OPTIONS", "HEAD"}
+    for route in app.routes:
+        for handler in getattr(route, "route_handlers", ()):
+            if not isinstance(handler, HTTPRouteHandler):
+                continue
+            # Auto-generated CORS/HEAD handlers carry no real operation.
+            if skip_methods >= set(handler.http_methods):
+                continue
+            if handler.opt.get("exclude_from_auth"):
+                continue
+            handler.security = list(_BEARER_SECURITY_REQUIREMENT)
+            # Drop any lazily-cached resolution so the new value is picked up.
+            handler._resolved_security = Empty
+
+    # The OpenAPI document may already have been built (e.g. during app init)
+    # before this stamping ran. Invalidate the plugin cache so the schema is
+    # regenerated with the per-operation security requirements in place.
+    try:
+        plugin = app.plugins.get(OpenAPIPlugin)
+    except KeyError:
+        return
+    plugin._openapi = None
+    plugin._openapi_schema = None
 
 
 __all__ = ["DEFAULT_JWT_EXCLUDE", "create_service_app"]
