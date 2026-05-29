@@ -261,7 +261,7 @@ def _generate_target(target: _ProtoGenerationTarget) -> None:
     _run_protoc(proto_dir=proto_dir, out_dir=out_dir, proto_files=proto_files)
     _rewrite_imports(out_dir, target.import_prefix)
     _ensure_package_inits(out_dir)
-    print(f"generated {target.import_prefix} → {out_dir}")
+    print(f"generated {target.import_prefix} → {out_dir}")  # noqa: archlint=print
 
 
 def main() -> None:

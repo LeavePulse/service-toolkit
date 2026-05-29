@@ -77,7 +77,7 @@ def ttl_with_jitter(
     jitter_limit = max(0.0, ttl_seconds * ratio)
     if max_jitter_seconds is not None:
         jitter_limit = min(jitter_limit, float(max_jitter_seconds))
-    jitter = random.uniform(0.0, jitter_limit)  # noqa: S311 - non-crypto jitter
+    jitter = random.uniform(0.0, jitter_limit)  # noqa: S311  # nosec B311 - non-crypto TTL jitter
     return max(1, int(ttl_seconds - jitter))
 
 
@@ -231,6 +231,11 @@ class RedisClient:
         try:
             await client.ping()
         except Exception:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "redis ping failed during connect; closing client", exc_info=True
+            )
             close_fn = getattr(client, "aclose", None) or getattr(client, "close", None)
             if close_fn is not None:
                 result = close_fn()

@@ -56,13 +56,13 @@ def build_shared_async_client(
             return existing
 
         if normalized_base_url is None:
-            client = httpx.AsyncClient(
+            client = httpx.AsyncClient(  # noqa: archlint=ad-hoc-client
                 timeout=float(timeout_seconds),
                 headers=dict(normalized_headers),
                 follow_redirects=bool(follow_redirects),
             )
         else:
-            client = httpx.AsyncClient(
+            client = httpx.AsyncClient(  # noqa: archlint=ad-hoc-client
                 base_url=normalized_base_url,
                 timeout=float(timeout_seconds),
                 headers=dict(normalized_headers),

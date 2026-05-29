@@ -54,7 +54,7 @@ def build_prometheus_instrumentation(
     """
 
     normalized = _normalize_service_name(service_name)
-    multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(
+    multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR") or os.getenv(  # noqa: archlint=env-access
         "prometheus_multiproc_dir"
     )
     if registry is not None:

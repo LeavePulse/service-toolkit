@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable
 from enum import StrEnum
@@ -15,6 +16,8 @@ from .redis import Keyspace, RedisLock, ttl_with_jitter
 
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
+
+logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
@@ -119,7 +122,7 @@ class LookupCache(Generic[K, V]):
 
         self._cache: OrderedDict[K, tuple[V, float]] = OrderedDict()
         self._inflight: dict[K, asyncio.Task[V]] = {}
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()  # noqa: archlint=cache-lock — this IS LookupCache
         self._semaphore = (
             asyncio.Semaphore(max(1, int(max_concurrency)))
             if max_concurrency is not None
@@ -247,6 +250,9 @@ class LookupCache(Generic[K, V]):
         try:
             acquired = await lock.acquire()
         except Exception:
+            logger.debug(
+                "redis lock acquire failed; loading without redis lock", exc_info=True
+            )
             return await self._load_without_redis(loader, key)
 
         if acquired:

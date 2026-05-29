@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 from asyncio import Lock
 from collections import OrderedDict
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
 
     from litestar import Request
 
+
+logger = logging.getLogger(__name__)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -136,6 +139,7 @@ def _resolve_redis_backend(
     try:
         redis_key = str(make_key(key))
     except Exception:
+        logger.debug("rate-limit key build failed", exc_info=True)
         return None
     return redis_client, redis_key
 
@@ -264,6 +268,7 @@ async def enforce_request_rate_limit(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.debug("rate-limit backend error", exc_info=exc)
         await _handle_backend_failure(
             failure_mode=mode,
             key=key,

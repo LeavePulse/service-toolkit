@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from typing import Any
 
@@ -11,6 +12,8 @@ import grpc
 from prometheus_client import Counter, Histogram
 
 from ..observability.metrics import metric_label
+
+logger = logging.getLogger(__name__)
 
 _SERVER_REQUESTS_TOTAL = Counter(
     "leavepulse_grpc_server_requests_total",
@@ -124,6 +127,7 @@ async def _observe_completed_client_call(
     except grpc.RpcError as exc:
         status_code = exc.code()
     except Exception:
+        logger.debug("failed to read gRPC status code", exc_info=True)
         status_code = None
 
     if status_code is None and bool(getattr(call, "cancelled", lambda: False)()):
@@ -227,7 +231,8 @@ class GrpcClientMetricsInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
                 started_at=started_at,
             )
             raise
-        except Exception:
+        except Exception as exc:
+            logger.debug("gRPC call failed; recording error metrics", exc_info=exc)
             _record_client_metrics(
                 service_name=self._service_name,
                 target=self._target,

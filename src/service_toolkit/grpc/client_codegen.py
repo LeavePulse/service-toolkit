@@ -644,7 +644,7 @@ def _generate_target(target: _GenerationTarget) -> None:
         )
         out_file = target.out_dir / f"{_snake(service.service_name)}_grpc.py"
         out_file.write_text(source)
-        print(f"wrote {out_file}")
+        print(f"wrote {out_file}")  # noqa: archlint=print
 
 
 def main() -> None:

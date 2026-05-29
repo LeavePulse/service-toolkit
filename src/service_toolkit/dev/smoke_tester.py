@@ -3,6 +3,8 @@
 LeavePulse Smoke Tester.
 Verifies service observability contract in a running container.
 """
+# noqa: archlint=print,time-sleep — synchronous CLI tool: print() is
+# user-facing output and time.sleep() is correct (no event loop to await on).
 
 import sys
 import time

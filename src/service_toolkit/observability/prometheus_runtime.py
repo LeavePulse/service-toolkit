@@ -7,7 +7,7 @@ import os
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
-DEFAULT_MULTIPROC_DIRECTORY = "/tmp/metrics"
+DEFAULT_MULTIPROC_DIRECTORY = "/tmp/metrics"  # nosec B108 - prometheus_client multiprocess dir, overridable via env
 
 
 def resolve_multiprocess_directory(
@@ -68,7 +68,7 @@ def exec_with_prepared_multiprocess_directory(
         default_directory=default_directory,
         env=env_map,
     )
-    os.execvpe(command[0], list(command), dict(env_map))
+    os.execvpe(command[0], list(command), dict(env_map))  # nosec B606 - CLI entrypoint exec'ing its own argv (e.g. gunicorn)
 
 
 def _build_parser() -> argparse.ArgumentParser:

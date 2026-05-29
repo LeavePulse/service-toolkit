@@ -2,12 +2,14 @@
 
 This is intended to be run in DEBUG mode inside service containers.
 """
+# noqa: archlint=env-access — DEBUG-only dev helper: reads its own env knobs
+# directly; not part of any service's request path.
 
 from __future__ import annotations
 
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404 - DEBUG-only dev helper shelling out to Alembic
 import sys
 import time
 
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 def _run_upgrade(*, cwd: str = "/app") -> None:
     started = time.perf_counter()
     try:
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv, no shell, no user input
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=cwd,
             check=False,

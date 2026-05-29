@@ -104,7 +104,7 @@ class PlatformPermsResolver:
         self._role_subject_prefix = role_invalidation_subject_prefix.rstrip(".")
         self._cache: dict[int, _CacheEntry] = {}
         self._inflight: dict[int, asyncio.Task[_CacheEntry]] = {}
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()  # noqa: archlint=cache-lock — subject-invalidated resolver cache, not a generic LookupCache
         self.metrics = metrics or ResolverMetrics()
 
     @property

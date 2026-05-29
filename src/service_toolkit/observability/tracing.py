@@ -1,4 +1,6 @@
 """OpenTelemetry tracing bootstrap helpers."""
+# noqa: archlint=env-access — reads standard ``OTEL_*`` env vars defined by the
+# OpenTelemetry spec; these are owned by the runtime, not service settings.
 
 from __future__ import annotations
 

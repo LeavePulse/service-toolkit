@@ -142,6 +142,7 @@ class RedisReplicaStore(Generic[K, V]):
                         try:
                             decoded[key] = msgspec.json.decode(raw, type=self._value_type)
                         except Exception:  # pragma: no cover - malformed entry
+                            logger.debug("skipping malformed snapshot entry", exc_info=True)
                             continue
                     self._set_local_many(decoded)
                     result.update(decoded)
