@@ -14,17 +14,30 @@ crate-type = ["cdylib", "rlib"]
 # text/import_resolve), keeping the 3 Python consumers working.
 default = ["python"]
 # pyo3 bindings without the extension-module link flag, so the crate still
-# builds as a plain rlib / for `cargo test`.
-python = ["dep:pyo3"]
+# builds as a plain rlib / for `cargo test`. Pulls in toml/serde_json for the
+# Python CI gate builder (pyproject parsing + secret-baseline evaluation).
+python = ["dep:pyo3", "dep:toml", "dep:serde_json"]
 # maturin layers this on top of `python` to produce the importable .so.
 extension-module = ["pyo3/extension-module"]
 # gRPC client helpers for Rust consumers (no Python dependency).
 grpc = ["dep:tonic", "dep:prost", "dep:tonic-types"]
+# Native `lp-ci` binary for Rust repos. No extra deps — the CI engine is pure
+# std — so this builds standalone with `--no-default-features --features cli`.
+cli = []
 
 [dependencies]
 regex = "1"
 unicode-normalization = "0.1"
 pyo3 = { version = "0.28", optional = true }
+toml = { version = "0.8", optional = true }
+serde_json = { version = "1", optional = true }
 tonic = { version = "0.12", optional = true }
 prost = { version = "0.13", optional = true }
 tonic-types = { version = "0.12", optional = true }
+
+# Native CI gate for Rust consumers. Gated behind `cli` so the default
+# (maturin/python) and grpc builds don't produce it.
+[[bin]]
+name = "lp-ci"
+path = "src/bin/lp_ci.rs"
+required-features = ["cli"]

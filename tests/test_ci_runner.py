@@ -1,211 +1,67 @@
+"""Tests for the thin ``lp-ci`` Python shim.
+
+The gate logic (step building, pyproject parsing, secret-baseline evaluation)
+now lives in the Rust crate and is covered by its own ``cargo test``. The shim
+only has one job: forward ``argv`` to ``service_toolkit_rust.run_ci`` and return
+its exit code. We assert exactly that, without requiring the compiled extension
+to be installed (it is stubbed).
+"""
+
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import sys
+import types
 
 import pytest
 
-from service_toolkit.dev.ci_runner import (
-    _build_steps,
-    _config_from_args,
-    _evaluate_secret_report,
-    _load_baseline_hashes,
-    _parse_args,
-)
+from service_toolkit.dev import ci_runner
 
 
-def test_ci_runner_matches_python_service_quality_steps(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "tests").mkdir()
-    (tmp_path / ".github" / "workflows").mkdir(parents=True)
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'example'\n")
-    monkeypatch.chdir(tmp_path)
+def _install_stub(monkeypatch: pytest.MonkeyPatch, recorder: list[list[str]]) -> None:
+    """Install a fake ``service_toolkit_rust`` whose ``run_ci`` records argv."""
 
-    config = _config_from_args(_parse_args([]))
-    commands = [step.command for step in _build_steps(config)]
+    def fake_run_ci(argv: list[str]) -> int:
+        recorder.append(list(argv))
+        return 0
 
-    assert commands == [
-        ("uv", "sync", "--locked", "--no-sources"),
-        ("uv", "run", "ruff", "check", "src"),
-        ("uv", "run", "lp-arch-lint", "src"),
-        (
-            "uv",
-            "run",
-            "--with",
-            "mypy",
-            "mypy",
-            "--ignore-missing-imports",
-            "--check-untyped-defs",
-            "src",
-        ),
-        (
-            "uv",
-            "run",
-            "--with",
-            "bandit",
-            "bandit",
-            "-r",
-            "src",
-            "-q",
-            "-s",
-            "B104,B105,B106",
-            "-x",
-            "tests,migrations,alembic/versions",
-        ),
-        (
-            "uv",
-            "run",
-            "--with",
-            "detect-secrets",
-            "detect-secrets",
-            "scan",
-            "src",
-            ".github/workflows",
-            "pyproject.toml",
-            "--exclude-files",
-            (
-                r"(^|/)(node_modules|\.venv|venv|dist|build|\.git|migrations|"
-                r"alembic/versions|tests?)/"
-            ),
-        ),
-        ("uv", "run", "pytest", "tests"),
-    ]
+    stub = types.ModuleType("service_toolkit_rust")
+    stub.run_ci = fake_run_ci  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "service_toolkit_rust", stub)
 
 
-def test_ci_runner_uses_pyproject_overrides(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "app").mkdir()
-    (tmp_path / "specs").mkdir()
-    (tmp_path / "pyproject.toml").write_text(
-        """
-[tool.service_toolkit.ci]
-source_paths = ["app"]
-test_paths = ["specs"]
-sync = false
-run_secrets = false
-bandit_skip = "B104,B608"
-bandit_exclude = "specs,migrations"
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
+def test_forwards_explicit_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+    _install_stub(monkeypatch, seen)
 
-    config = _config_from_args(_parse_args([]))
-    commands = [step.command for step in _build_steps(config)]
+    code = ci_runner.run_ci(["--no-sync", "--changed", "HEAD"])
 
-    assert commands[0] == ("uv", "run", "ruff", "check", "app")
-    assert ("uv", "sync", "--locked", "--no-sources") not in commands
-    assert not any("detect-secrets" in command for command in commands)
-    assert (
-        "uv",
-        "run",
-        "--with",
-        "bandit",
-        "bandit",
-        "-r",
-        "app",
-        "-q",
-        "-s",
-        "B104,B608",
-        "-x",
-        "specs,migrations",
-    ) in commands
-    assert commands[-1] == ("uv", "run", "pytest", "specs")
+    assert code == 0
+    assert seen == [["--no-sync", "--changed", "HEAD"]]
 
 
-def test_changed_mode_limits_lint_to_changed_files(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "touched.py").write_text("x = 1\n")
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'example'\n")
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "service_toolkit.dev.ci_runner._changed_python_files",
-        lambda base, roots: ("src/touched.py",),
-    )
+def test_defaults_to_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+    _install_stub(monkeypatch, seen)
+    monkeypatch.setattr(sys, "argv", ["lp-ci", "--no-tests"])
 
-    config = _config_from_args(_parse_args(["--no-sync", "--changed"]))
-    commands = [step.command for step in _build_steps(config)]
+    code = ci_runner.run_ci()
 
-    assert ("uv", "run", "ruff", "check", "src/touched.py") in commands
-    mypy_cmd = next(c for c in commands if "mypy" in c)
-    assert mypy_cmd[-1] == "src/touched.py"
-    # Bandit still scans the whole source root, not just changed files.
-    assert ("uv", "run", "--with", "bandit", "bandit", "-r", "src",
-            "-q", "-s", "B104,B105,B106", "-x",
-            "tests,migrations,alembic/versions") in commands
+    assert code == 0
+    assert seen == [["--no-tests"]]
 
 
-def test_changed_mode_skips_lint_when_no_changes(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'example'\n")
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "service_toolkit.dev.ci_runner._changed_python_files",
-        lambda base, roots: (),
-    )
+def test_returns_rust_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = types.ModuleType("service_toolkit_rust")
+    stub.run_ci = lambda _argv: 1  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "service_toolkit_rust", stub)
 
-    config = _config_from_args(_parse_args(["--no-sync", "--no-bandit", "--changed"]))
-    names = [step.name for step in _build_steps(config)]
-
-    assert "Ruff" not in names
-    assert "MyPy" not in names
+    assert ci_runner.run_ci([]) == 1
 
 
-def test_evaluate_secret_report_flags_new_findings(tmp_path: Path) -> None:
-    report = tmp_path / "scan.json"
-    report.write_text(
-        json.dumps(
-            {"results": {"src/app.py": [{"hashed_secret": "deadbeef", "type": "X"}]}}
-        )
-    )
-    count, summary = _evaluate_secret_report(report)
-    assert count == 1
-    assert "1 new finding" in summary
+def test_missing_extension_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate the 'rust' extra not being installed.
+    monkeypatch.setitem(sys.modules, "service_toolkit_rust", None)
 
-
-def test_evaluate_secret_report_ignores_baselined(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "scan.json"
-    report.write_text(
-        json.dumps(
-            {"results": {"src/app.py": [{"hashed_secret": "deadbeef", "type": "X"}]}}
-        )
-    )
-    monkeypatch.setattr(
-        "service_toolkit.dev.ci_runner._load_baseline_hashes",
-        lambda *a, **k: {"deadbeef"},
-    )
-    count, summary = _evaluate_secret_report(report)
-    assert count == 0
-    assert "baselined" in summary
-
-
-def test_load_baseline_hashes_reads_results(tmp_path: Path) -> None:
-    baseline = tmp_path / ".secrets.baseline"
-    baseline.write_text(
-        json.dumps(
-            {
-                "results": {
-                    "a.yml": [{"hashed_secret": "aaa"}, {"hashed_secret": "bbb"}],
-                }
-            }
-        )
-    )
-    assert _load_baseline_hashes(baseline) == {"aaa", "bbb"}
-
-
-def test_load_baseline_hashes_missing_file(tmp_path: Path) -> None:
-    assert _load_baseline_hashes(tmp_path / "nope.baseline") == set()
+    with pytest.raises(SystemExit) as excinfo:
+        ci_runner.run_ci([])
+    assert excinfo.value.code == 2
