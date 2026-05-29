@@ -70,6 +70,20 @@ def current_jwt_payload() -> JWTPayload | None:
     return _CURRENT_JWT_PAYLOAD.get()
 
 
+def user_id_from_payload(payload: JWTPayload | None) -> int:
+    """Extract the integer user id (``sub``) from a JWT payload.
+
+    Raises ``AuthRequiredError`` when the payload is missing or its ``sub`` is
+    not a usable integer — the shape every gRPC servicer was re-implementing.
+    """
+    from awesome_errors import AuthRequiredError  # type: ignore[import-not-found]
+
+    try:
+        return int(payload.sub)  # type: ignore[union-attr]
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise AuthRequiredError("Authentication required.") from exc
+
+
 class JwtForwardingClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
     """Copy the task-local ``forwarded_jwt`` into outbound metadata.
 
