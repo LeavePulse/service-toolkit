@@ -270,6 +270,10 @@ def create_service_app(
     if auth_integration is not None:
         _stamp_handler_security(app)
 
+    from .sdk_hints import stamp_sdk_hints
+
+    stamp_sdk_hints(app)
+
     return app
 
 

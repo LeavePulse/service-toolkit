@@ -13,6 +13,8 @@ __all__ = [
     "ProjectionSpec",
     "RateLimitFailureMode",
     "ResponsePolicy",
+    "SDK_SCHEMA_VERSION",
+    "SdkLink",
     "build_shared_async_client",
     "close_shared_async_clients",
     "create_service_app",
@@ -27,6 +29,8 @@ __all__ = [
     "resolve_client_ip",
     "resolve_cors_origins",
     "resolve_locale_from_request",
+    "sdk_operation",
+    "stamp_sdk_hints",
     "with_projection",
 ]
 
@@ -38,6 +42,8 @@ _EXPORT_MODULES = {
     "ProjectionSpec": ".projection",
     "RateLimitFailureMode": ".rate_limit",
     "ResponsePolicy": ".projection",
+    "SDK_SCHEMA_VERSION": ".sdk_hints",
+    "SdkLink": ".sdk_hints",
     "build_shared_async_client": ".http",
     "close_shared_async_clients": ".http",
     "create_service_app": ".app_factory",
@@ -52,6 +58,8 @@ _EXPORT_MODULES = {
     "resolve_client_ip": ".request_ip",
     "resolve_cors_origins": ".cors",
     "resolve_locale_from_request": ".locale",
+    "sdk_operation": ".sdk_hints",
+    "stamp_sdk_hints": ".sdk_hints",
     "with_projection": ".projection_decorator",
 }
 _SUBMODULES = {
@@ -67,6 +75,7 @@ _SUBMODULES = {
     "projection_decorator": ".projection_decorator",
     "rate_limit": ".rate_limit",
     "request_ip": ".request_ip",
+    "sdk_hints": ".sdk_hints",
 }
 
 
