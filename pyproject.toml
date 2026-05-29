@@ -22,7 +22,7 @@ rust = [
 ]
 redis = [
     "redis>=7.3.0,<8.0.0",
-    "msgspec>=0.20.0,<0.21",
+    "msgspec>=0.21.0,<0.22",
     "env-settings @ git+https://github.com/THEROER/env-settings",
 ]
 sqlalchemy = ["sqlalchemy~=2.0"]
@@ -59,7 +59,7 @@ dev = [
     "watchfiles>=1.0.0,<2",
     "sqlalchemy~=2.0",
     "httpx>=0.28.1,<1.0.0",
-    "msgspec>=0.20.0,<0.21",
+    "msgspec>=0.21.0,<0.22",
     "awesome-errors @ git+https://github.com/THEROER/awesome-errors",
     "pytest>=9.0.2,<10",
     "pytest-asyncio>=1.3.0,<2",
