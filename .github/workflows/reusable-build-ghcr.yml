@@ -23,13 +23,18 @@ on:
         required: false
         type: string
         default: ""
+      runs_on:
+        description: JSON-encoded runs-on value for the build job.
+        required: false
+        type: string
+        default: '["self-hosted","Linux","X64","ci-heavy"]'
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   build:
-    runs-on: [self-hosted, Linux, X64, ci-heavy]
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     timeout-minutes: 45
     concurrency:
       group: build-ghcr-${{ github.repository }}-${{ github.ref }}
