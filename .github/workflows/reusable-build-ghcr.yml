@@ -149,4 +149,4 @@ jobs:
           cache-from: type=gha,scope=${{ steps.image.outputs.cache_scope }}
           cache-to: type=gha,scope=${{ steps.image.outputs.cache_scope }},mode=min,ignore-error=true
           secrets: | # pragma: allowlist secret
-            github_token=${{ secrets.GH_PAT || github.token }} # pragma: allowlist secret
+            github_token=${{ secrets.GH_PAT || github.token }}
