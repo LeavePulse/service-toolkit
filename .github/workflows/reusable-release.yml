@@ -1,0 +1,179 @@
+name: reusable-release
+
+# Publishes a self-updating desktop-app release: collects the per-platform build artifacts,
+# cuts a GitHub Release, mirrors the binaries to the CDN (MinIO), and registers
+# signed update manifests through the platform BFF so the in-app self-updater
+# finds them. The manifest route and request shape live here so every product
+# that self-updates shares one source of truth.
+#
+# The caller's build job must upload artifacts named:
+#   leavepulse-launcher-win-portable   -> leavepulse-launcher.exe   (windows-nsis)
+#   leavepulse-launcher-linux-appimage -> *.AppImage                (linux-appimage)
+#   leavepulse-launcher-mac-arm        -> *.dmg                     (macos-arm)
+#   leavepulse-launcher-mac-intel      -> *.dmg                     (macos-intel)
+# plus any extra artifacts to attach to the GitHub Release.
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Tag to publish under (e.g. v1.2.3). Defaults to the pushed tag.
+        required: false
+        type: string
+        default: ""
+      product:
+        description: Update-service product key the manifests are registered under.
+        required: false
+        type: string
+        default: "launcher"
+      update_service_url:
+        description: Base URL of the platform BFF that fronts update-service.
+        required: false
+        type: string
+        default: ""
+      cdn_base_url:
+        description: Public CDN base URL that download_url points at.
+        required: false
+        type: string
+        default: ""
+      minio_endpoint:
+        description: MinIO S3 endpoint the artifacts are mirrored to.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      UPDATE_ADMIN_TOKEN:
+        required: false
+      MINIO_ACCESS_KEY:
+        required: false
+      MINIO_SECRET_KEY:
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find artifacts -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > artifacts/SHA256SUMS.txt
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if [[ -z "$tag" ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ -z "$tag" || "$tag" == "$GITHUB_REF" ]]; then
+            echo "No tag could be resolved (set inputs.release_tag or trigger from a tag push)" >&2
+            exit 1
+          fi
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: artifacts/**/*
+
+      # Mirror artifacts to the CDN (MinIO) and register signed update manifests
+      # through the public BFF. The launcher downloads straight from the CDN;
+      # update-service signs each manifest with its Ed25519 key, which the
+      # launcher verifies.
+      - name: Set up MinIO client
+        if: inputs.update_service_url != '' && inputs.minio_endpoint != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$HOME/.local/bin/mc"
+          chmod +x "$HOME/.local/bin/mc"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Publish artifacts to CDN and register manifests
+        if: inputs.update_service_url != '' && inputs.minio_endpoint != ''
+        shell: bash
+        env:
+          UPDATE_SERVICE_URL: ${{ inputs.update_service_url }}
+          UPDATE_ADMIN_TOKEN: ${{ secrets.UPDATE_ADMIN_TOKEN }}
+          MINIO_ENDPOINT: ${{ inputs.minio_endpoint }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          CDN_BASE_URL: ${{ inputs.cdn_base_url }}
+          PRODUCT: ${{ inputs.product }}
+          RELEASE_TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          # Channel from the tag's pre-release suffix: v1.2.3 -> stable,
+          # v1.2.3-beta.1 -> beta, -rc -> beta, -nightly -> nightly.
+          channel="stable"
+          case "$RELEASE_TAG" in
+            *-nightly*) channel="nightly" ;;
+            *-beta*|*-rc*|*-alpha*) channel="beta" ;;
+          esac
+
+          mc alias set cdn "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+          base="${UPDATE_SERVICE_URL%/}"
+          cdn_base="${CDN_BASE_URL%/}"
+
+          # platform : artifact whose sha256 we sign and whose bytes we mirror.
+          declare -A artifacts=(
+            ["windows-nsis"]="artifacts/leavepulse-launcher-win-portable/leavepulse-launcher.exe"
+            ["linux-appimage"]="$(ls artifacts/leavepulse-launcher-linux-appimage/*.AppImage 2>/dev/null | head -n1)"
+            ["macos-arm"]="$(ls artifacts/leavepulse-launcher-mac-arm/*.dmg 2>/dev/null | head -n1)"
+            ["macos-intel"]="$(ls artifacts/leavepulse-launcher-mac-intel/*.dmg 2>/dev/null | head -n1)"
+          )
+
+          for platform in "${!artifacts[@]}"; do
+            file="${artifacts[$platform]}"
+            if [[ -z "$file" || ! -f "$file" ]]; then
+              echo "::warning::no artifact for $platform; skipping manifest"
+              continue
+            fi
+            sha256="$(sha256sum "$file" | cut -d' ' -f1)"
+            file_name="$(basename "$file")"
+            key="${PRODUCT}/${version}/${platform}/${file_name}"
+
+            echo "Mirroring $file -> cdn/releases/${key}"
+            mc cp "$file" "cdn/releases/${key}" >/dev/null
+            download_url="${cdn_base}/${key}"
+
+            echo "Publishing manifest: product=$PRODUCT channel=$channel platform=$platform version=$version"
+            status="$(curl -sS -o /tmp/manifest-resp.json -w '%{http_code}' \
+              -X PUT "${base}/v1/${PRODUCT}/updates/manifests/${channel}/${platform}" \
+              -H "X-Update-Admin-Token: ${UPDATE_ADMIN_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n \
+                --arg version "$version" \
+                --arg sha256 "$sha256" \
+                --arg file_name "$file_name" \
+                --arg download_url "$download_url" \
+                '{version: $version, sha256: $sha256, file_name: $file_name, download_url: $download_url}')")"
+            if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+              echo "::error::manifest upsert for $platform failed (HTTP $status)"
+              cat /tmp/manifest-resp.json
+              exit 1
+            fi
+          done
