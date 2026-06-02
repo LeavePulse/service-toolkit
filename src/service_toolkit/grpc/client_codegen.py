@@ -276,8 +276,8 @@ def _render_request_build(method: _Method) -> str:
             if field.map_value_is_message:
                 multi_blocks.append(
                     f"if {field.name}:\n"
-                    f"    for _k, _v in {field.name}.items():\n"
-                    f"        request.{field.name}[_k].CopyFrom(_v)"
+                    f"    for key, value in {field.name}.items():\n"
+                    f"        request.{field.name}[key].CopyFrom(value)"
                 )
             else:
                 multi_blocks.append(
