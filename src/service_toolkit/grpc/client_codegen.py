@@ -80,6 +80,10 @@ class _Field:
     is_repeated: bool
     is_optional: bool
     is_message: bool
+    is_map: bool = False
+    # For map fields whose value is a message: the proto value type's Python
+    # name (e.g. ``ManifestComponent``), used to render ``[k].CopyFrom(v)``.
+    map_value_is_message: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +151,18 @@ def _collect_fields(descriptor: Any) -> tuple[_Field, ...]:
         py = _py_type_for(f)
         # ``label == LABEL_REPEATED`` (3) means repeated/map field.
         is_repeated = f.label == 3
+        # A map field is a repeated message whose entry type is flagged
+        # ``map_entry``; protobuf models it as ``repeated MapFieldEntry`` under
+        # the hood, so it must be distinguished from a plain repeated field.
+        is_map = bool(
+            is_repeated
+            and f.type == _TYPE_MESSAGE
+            and f.message_type is not None
+            and f.message_type.GetOptions().map_entry
+        )
+        map_value_is_message = bool(
+            is_map and f.message_type.fields_by_name["value"].type == _TYPE_MESSAGE
+        )
         # proto3 ``optional`` keyword carries a synthetic oneof.
         is_optional = bool(f.containing_oneof and f.containing_oneof.name.startswith("_"))
         is_message = f.type == _TYPE_MESSAGE
@@ -157,6 +173,8 @@ def _collect_fields(descriptor: Any) -> tuple[_Field, ...]:
                 is_repeated=is_repeated,
                 is_optional=is_optional,
                 is_message=is_message,
+                is_map=is_map,
+                map_value_is_message=map_value_is_message,
             )
         )
     return tuple(fields)
@@ -224,7 +242,9 @@ def _render_signature(method: _Method) -> str:
     required: list[str] = []
     optional: list[str] = []
     for field in method.fields:
-        if field.is_repeated:
+        if field.is_map:
+            optional.append(f"{field.name}: Mapping[str, Any] | None = None")
+        elif field.is_repeated:
             optional.append(f"{field.name}: Iterable[{field.py_type}] = ()")
         elif field.is_message:
             optional.append(f"{field.name}: Any | None = None")
@@ -252,7 +272,19 @@ def _render_request_build(method: _Method) -> str:
     optional_kwargs: list[str] = []
     multi_blocks: list[str] = []
     for field in method.fields:
-        if field.is_repeated:
+        if field.is_map:
+            if field.map_value_is_message:
+                multi_blocks.append(
+                    f"if {field.name}:\n"
+                    f"    for _k, _v in {field.name}.items():\n"
+                    f"        request.{field.name}[_k].CopyFrom(_v)"
+                )
+            else:
+                multi_blocks.append(
+                    f"if {field.name}:\n"
+                    f"    request.{field.name}.update({field.name})"
+                )
+        elif field.is_repeated:
             multi_blocks.append(
                 f"if {field.name}:\n    request.{field.name}.extend({field.name})"
             )
