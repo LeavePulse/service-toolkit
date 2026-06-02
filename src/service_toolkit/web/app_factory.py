@@ -130,6 +130,12 @@ def create_service_app(
     extra_middleware: Sequence[Any] = (),
     # Extra plugins
     extra_plugins: Sequence[Any] = (),
+    # Hooks run over the rendered OpenAPI document (the live ``/openapi.json``)
+    # after SDK hints are stamped. Each receives the document dict and mutates
+    # it in place — used by the contract-owning service to reshape the published
+    # schema (e.g. lift Snowflake ids into a named component). Generic services
+    # leave this empty.
+    openapi_postprocess: Sequence[Callable[[dict[str, Any]], None]] = (),
 ) -> Litestar:
     """Create a fully-configured Litestar application.
 
@@ -274,7 +280,31 @@ def create_service_app(
 
     stamp_sdk_hints(app)
 
+    if openapi_postprocess:
+        _apply_openapi_postprocess(app, openapi_postprocess)
+
     return app
+
+
+def _apply_openapi_postprocess(
+    app: Litestar,
+    hooks: Sequence[Callable[[dict[str, Any]], None]],
+) -> None:
+    """Run each hook over the rendered OpenAPI document, in place.
+
+    Mutates the same cached dict that backs ``/openapi.json`` (the one
+    ``stamp_sdk_hints`` already writes to), so changes appear in both the live
+    schema endpoint and the contract snapshot.
+    """
+    from litestar._openapi.plugin import OpenAPIPlugin
+
+    try:
+        plugin = app.plugins.get(OpenAPIPlugin)
+    except KeyError:
+        return
+    schema = plugin.provide_openapi_schema()
+    for hook in hooks:
+        hook(schema)
 
 
 def _stamp_handler_security(app: Litestar) -> None:

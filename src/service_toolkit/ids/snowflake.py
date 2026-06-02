@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Final, Optional
+from typing import Annotated, Final, Optional
+
+from litestar.params import Parameter
 
 
 __all__ = [
     "DEFAULT_EPOCH_MS",
+    "Snowflake",
     "SnowflakeGenerator",
     "configure_default_generator",
     "reset_default_generator",
@@ -16,6 +19,19 @@ __all__ = [
 ]
 
 DEFAULT_EPOCH_MS: Final[int] = 1_735_682_400_000  # 2025-01-01T00:00:00Z
+
+
+#: A 64-bit Snowflake id. Use in place of bare ``int`` for *any* id — body and
+#: response fields, path parameters, query parameters alike.
+#:
+#: The ``Parameter(schema_extra=...)`` marker is read by Litestar in both schema
+#: paths (msgspec ``Struct`` fields *and* path/query parameters), so every id
+#: renders as ``{type: integer, format: snowflake}`` with no OpenAPI plugin
+#: required. The SDK pipeline then lifts each occurrence into a named
+#: ``components/schemas/Snowflake`` (``$ref``) so generators and Scalar see one
+#: type — TypeScript surfaces it as a string (to dodge JS's 2^53 limit),
+#: Rust/Python as a 64-bit int.
+Snowflake = Annotated[int, Parameter(schema_extra={"format": "snowflake"})]
 
 
 class SnowflakeGenerator:

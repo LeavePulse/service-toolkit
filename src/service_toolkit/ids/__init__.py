@@ -7,6 +7,7 @@ import sys
 
 __all__ = [
     "DEFAULT_EPOCH_MS",
+    "Snowflake",
     "SnowflakeGenerator",
     "configure_default_generator",
     "generate_id",
@@ -15,6 +16,7 @@ __all__ = [
 
 _EXPORT_MODULES = {
     "DEFAULT_EPOCH_MS": ".snowflake",
+    "Snowflake": ".snowflake",
     "SnowflakeGenerator": ".snowflake",
     "configure_default_generator": ".snowflake",
     "generate_id": ".snowflake",
