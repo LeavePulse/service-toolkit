@@ -105,6 +105,7 @@ def sdk_operation(
     batchable: bool = False,
     returns: str | None = None,
     data_root: str | None = None,
+    id_path: str | None = None,
     links: list[SdkLink] | None = None,
 ):
     """Attach SDK generation hints to a Litestar route handler.
@@ -129,6 +130,9 @@ def sdk_operation(
         data_root: the response wraps the resource under this field; the SDK
             resource binds to that inner object (e.g. ``project`` in
             ``{project: {...}, servers: [...]}``).
+        id_path: dotted path to the instance id within the response payload
+            when it is not top-level, e.g. ``summary.id`` for an envelope
+            shaped like ``{summary: {id, ...}, ...}``.
         links: typed relations to other resources.
     """
     hints: dict[str, Any] = {"schema_version": SDK_SCHEMA_VERSION}
@@ -148,6 +152,8 @@ def sdk_operation(
         hints["returns"] = returns
     if data_root is not None:
         hints["data_root"] = data_root
+    if id_path is not None:
+        hints["id_path"] = id_path
     if links:
         hints["links"] = [link.to_dict() for link in links]
 
@@ -192,6 +198,8 @@ def _hints_to_extensions(hints: Mapping[str, Any]) -> dict[str, Any]:
         extensions["x-sdk-returns"] = hints["returns"]
     if "data_root" in hints:
         extensions["x-sdk-data-root"] = hints["data_root"]
+    if "id_path" in hints:
+        extensions["x-sdk-id-path"] = hints["id_path"]
     if "links" in hints:
         extensions["x-sdk-link"] = hints["links"]
     return extensions
