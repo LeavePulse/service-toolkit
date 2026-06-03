@@ -42,6 +42,7 @@ from ..errors.awesome_errors import (
     build_standard_exception_handlers,
 )
 from .cors import resolve_cors_origins
+from .etag import etag_middleware
 from .health import HealthController
 from ..observability.logging import (
     build_standard_logging_config,
@@ -136,6 +137,10 @@ def create_service_app(
     # schema (e.g. lift Snowflake ids into a named component). Generic services
     # leave this empty.
     openapi_postprocess: Sequence[Callable[[dict[str, Any]], None]] = (),
+    # Conditional-request support: stamp an ETag on cacheable GET responses and
+    # answer a matching If-None-Match with 304. Live endpoints opt out per-route
+    # via ``Cache-Control: no-store``. Disable for services with no cacheable GET.
+    enable_etag: bool = True,
 ) -> Litestar:
     """Create a fully-configured Litestar application.
 
@@ -194,6 +199,10 @@ def create_service_app(
     if otel_middleware is not None:
         middleware.append(DefineMiddleware(otel_middleware))
     middleware.append(DefineMiddleware(request_context_middleware))
+    # ETag sits high in the stack so it sees the fully-rendered response body
+    # (after handlers + serialization) yet inside tracing/context.
+    if enable_etag:
+        middleware.append(DefineMiddleware(etag_middleware))
     middleware.append(DefineMiddleware(PrometheusMiddleware))
 
     if auth_integration is not None:
