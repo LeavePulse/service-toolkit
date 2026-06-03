@@ -38,7 +38,7 @@ grpc = [
 grpc-codegen = ["grpcio-tools>=1.71.0,<2"]
 tracing = [
     "opentelemetry-api>=1.40.0,<2.0.0",
-    "opentelemetry-sdk>=1.40.0,<2.0.0",
+    "opentelemetry-sdk>=1.41.0,<2.0.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.40.0,<2.0.0",
     "opentelemetry-instrumentation-asgi>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-httpx>=0.49b0,<1.0.0",
