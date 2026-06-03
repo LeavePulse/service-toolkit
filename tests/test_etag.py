@@ -25,10 +25,10 @@ async def get_empty() -> None:
     return None
 
 
-def _app() -> Litestar:
+def _app(exclude: tuple[str, ...] = ()) -> Litestar:
     return Litestar(
         route_handlers=[get_thing, get_live, get_empty],
-        middleware=[DefineMiddleware(etag_middleware)],
+        middleware=[DefineMiddleware(etag_middleware, exclude=exclude)],
     )
 
 
@@ -69,4 +69,11 @@ def test_empty_response_passes_through() -> None:
     with TestClient(_app()) as client:
         resp = client.get("/empty")
         assert resp.status_code == 204
+        assert resp.headers.get("etag") is None
+
+
+def test_excluded_path_is_not_tagged() -> None:
+    with TestClient(_app(exclude=(r"^/thing$",))) as client:
+        resp = client.get("/thing")
+        assert resp.status_code == 200
         assert resp.headers.get("etag") is None

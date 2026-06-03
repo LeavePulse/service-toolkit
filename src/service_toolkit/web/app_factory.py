@@ -138,9 +138,11 @@ def create_service_app(
     # leave this empty.
     openapi_postprocess: Sequence[Callable[[dict[str, Any]], None]] = (),
     # Conditional-request support: stamp an ETag on cacheable GET responses and
-    # answer a matching If-None-Match with 304. Live endpoints opt out per-route
-    # via ``Cache-Control: no-store``. Disable for services with no cacheable GET.
+    # answer a matching If-None-Match with 304. Disable for services with no
+    # cacheable GET. ``etag_exclude_patterns`` are path regexes skipped entirely
+    # (live endpoints: online status, telemetry, aggregates).
     enable_etag: bool = True,
+    etag_exclude_patterns: Sequence[str] = (),
 ) -> Litestar:
     """Create a fully-configured Litestar application.
 
@@ -202,7 +204,9 @@ def create_service_app(
     # ETag sits high in the stack so it sees the fully-rendered response body
     # (after handlers + serialization) yet inside tracing/context.
     if enable_etag:
-        middleware.append(DefineMiddleware(etag_middleware))
+        middleware.append(
+            DefineMiddleware(etag_middleware, exclude=tuple(etag_exclude_patterns))
+        )
     middleware.append(DefineMiddleware(PrometheusMiddleware))
 
     if auth_integration is not None:

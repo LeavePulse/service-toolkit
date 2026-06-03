@@ -17,7 +17,8 @@ a BFF, where the response is already assembled in memory from upstream gRPC.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Sequence
 from hashlib import blake2b
 
 from litestar.types import (
@@ -45,13 +46,24 @@ def _compute_etag(body: bytes) -> str:
 
 
 class ETagMiddleware:
-    """ASGI middleware adding ETag + If-None-Match handling to GET responses."""
+    """ASGI middleware adding ETag + If-None-Match handling to GET responses.
 
-    def __init__(self, app: ASGIApp) -> None:
+    ``exclude`` is a sequence of path regexes (matched against the request path)
+    that skip tagging entirely — for live endpoints whose data changes every
+    request (online status, telemetry, aggregates).
+    """
+
+    def __init__(self, app: ASGIApp, exclude: Sequence[str] = ()) -> None:
         self.app = app
+        self._exclude = [re.compile(pattern) for pattern in exclude]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http" or scope.get("method") != "GET":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if any(pattern.search(path) for pattern in self._exclude):
             await self.app(scope, receive, send)
             return
 
@@ -151,9 +163,9 @@ def _etag_matches(if_none_match: bytes, etag: bytes) -> bool:
     return False
 
 
-def etag_middleware(app: ASGIApp) -> ASGIApp:
+def etag_middleware(app: ASGIApp, exclude: Sequence[str] = ()) -> ASGIApp:
     """Return ETag middleware as an ASGI app factory."""
-    return ETagMiddleware(app)
+    return ETagMiddleware(app, exclude=exclude)
 
 
 __all__ = ["ETagMiddleware", "etag_middleware"]
