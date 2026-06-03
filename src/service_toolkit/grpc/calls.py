@@ -197,8 +197,11 @@ def optional_dt(message: Any, field: str) -> datetime | None:
     language ecosystems. This helper centralises the parse + None-fallback
     pattern that every consumer was open-coding.
     """
-    raw = optional_str(message, field)
-    if raw is None or not raw:
+    # Timestamps are non-optional proto3 ``string`` (default ``""``), so read
+    # the value directly: ``HasField`` is illegal on a non-optional scalar and
+    # would raise ``ValueError``. An empty string means "absent".
+    raw = str(getattr(message, field, "") or "")
+    if not raw:
         return None
     try:
         return datetime.fromisoformat(raw)
