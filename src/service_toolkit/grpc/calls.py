@@ -161,30 +161,46 @@ async def grpc_call(
 # proto3 optional-field helpers.
 # ---------------------------------------------------------------------------
 
+def _field_is_present(message: Any, field: str) -> bool:
+    """Whether ``field`` carries a value.
+
+    ``HasField`` is only legal for fields with explicit presence (proto3
+    ``optional`` scalars, messages, oneof members) and raises ``ValueError``
+    for plain proto3 scalars. For those we treat any non-default value as
+    "present": an empty string / zero / false means "absent". This lets the
+    ``optional_*`` helpers be used uniformly regardless of whether the proto
+    marks the field ``optional``.
+    """
+    try:
+        return bool(message.HasField(field))
+    except ValueError:
+        return bool(getattr(message, field, None))
+
+
 def optional_str(message: Any, field: str) -> str | None:
-    """Return ``str(getattr(message, field))`` when the optional field is set."""
-    if not message.HasField(field):
+    """Return the string value when set, else ``None`` (presence-agnostic)."""
+    if not _field_is_present(message, field):
         return None
     return str(getattr(message, field))
 
 
 def optional_int(message: Any, field: str) -> int | None:
-    """Return ``int(getattr(message, field))`` when the optional field is set."""
-    if not message.HasField(field):
+    """Return the int value when set, else ``None`` (presence-agnostic)."""
+    if not _field_is_present(message, field):
         return None
     return int(getattr(message, field))
 
 
 def optional_bool(message: Any, field: str) -> bool | None:
-    """Return ``bool(getattr(message, field))`` when the optional field is set."""
-    if not message.HasField(field):
+    """Return the bool value when set, else ``None`` (presence-agnostic)."""
+    if not _field_is_present(message, field):
         return None
     return bool(getattr(message, field))
 
 
 def optional_float(message: Any, field: str) -> float | None:
-    """Return ``float(getattr(message, field))`` when the optional field is set."""
-    if not message.HasField(field):
+    """Return the float value when set, else ``None`` (presence-agnostic)."""
+    if not _field_is_present(message, field):
         return None
     return float(getattr(message, field))
 
@@ -216,7 +232,7 @@ def optional_str_from_int(message: Any, field: str) -> str | None:
     the public contract carries it as a string (typically because the
     public id space is larger than 2^63 or uses a different encoding).
     """
-    if not message.HasField(field):
+    if not _field_is_present(message, field):
         return None
     return str(getattr(message, field))
 
