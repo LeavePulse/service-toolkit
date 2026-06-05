@@ -122,6 +122,7 @@ def build_grpc_lifecycle(
 
     async def _startup() -> None:
         from .metrics import GrpcServerMetricsInterceptor
+        from .servicer import DomainErrorServerInterceptor
 
         interceptors: list[grpc.aio.ServerInterceptor] = [
             GrpcServerMetricsInterceptor(service_name)
@@ -135,6 +136,13 @@ def build_grpc_lifecycle(
             from .jwt_forwarding import JwtContextServerInterceptor
 
             interceptors.append(JwtContextServerInterceptor(jwt_verifier))
+
+        # Innermost interceptor: convert awesome-errors domain exceptions raised
+        # by a servicer into precise gRPC status codes so the metrics interceptor
+        # records the real code and clients see UNAUTHENTICATED/NOT_FOUND/…
+        # instead of UNKNOWN. Must wrap the servicer directly, hence appended
+        # last (grpc.aio applies the last interceptor closest to the handler).
+        interceptors.append(DomainErrorServerInterceptor())
 
         server = create_grpc_server(
             port=port,
