@@ -20,6 +20,13 @@ const SUSPECT_TRIGGER_WINDOW_SECS: f64 = 30.0 * 60.0;
 const SUSPECT_CLOSE_ONLINE_THRESHOLD: i64 = 5;
 const SUSPECT_STAGNANT_MIN_DURATION_SECS: f64 = 6.0 * 60.0 * 60.0;
 const SUSPECT_STAGNANT_MAX_GAP_SECS: f64 = 30.0 * 60.0;
+const SUSPECT_NEAR_FLAT_MIN_ONLINE: i64 = 100;
+const SUSPECT_NEAR_FLAT_MIN_DURATION_SECS: f64 = 12.0 * 60.0 * 60.0;
+const SUSPECT_NEAR_FLAT_MAX_GAP_SECS: f64 = 30.0 * 60.0;
+const SUSPECT_NEAR_FLAT_MAX_RANGE_RATIO: f64 = 0.12;
+const SUSPECT_NEAR_FLAT_MAX_MEAN_DELTA_RATIO: f64 = 0.015;
+const SUSPECT_NEAR_FLAT_MIN_SMALL_DELTA_RATIO: f64 = 0.85;
+const SUSPECT_NEAR_FLAT_SMALL_DELTA_ABS: i64 = 3;
 
 pub const STATUS_SUSPECT: &str = "suspect";
 pub const STATUS_MAINTENANCE: &str = "maintenance";
@@ -459,6 +466,180 @@ fn build_stagnant_suspect_intervals(
     merge_intervals(&mut intervals)
 }
 
+#[derive(Clone, Debug)]
+struct NearFlatRun {
+    start: f64,
+    previous_ts: f64,
+    previous_online: i64,
+    min_online: i64,
+    max_online: i64,
+    sum_online: f64,
+    sample_count: i64,
+    sum_delta: f64,
+    small_delta_count: i64,
+    transition_count: i64,
+}
+
+impl NearFlatRun {
+    fn new(ts: f64, online: i64) -> Self {
+        Self {
+            start: ts,
+            previous_ts: ts,
+            previous_online: online,
+            min_online: online,
+            max_online: online,
+            sum_online: online as f64,
+            sample_count: 1,
+            sum_delta: 0.0,
+            small_delta_count: 0,
+            transition_count: 0,
+        }
+    }
+
+    fn push(&mut self, ts: f64, online: i64) {
+        let delta = (online - self.previous_online).abs();
+        self.min_online = self.min_online.min(online);
+        self.max_online = self.max_online.max(online);
+        self.sum_online += online as f64;
+        self.sample_count += 1;
+        self.sum_delta += delta as f64;
+        if delta <= SUSPECT_NEAR_FLAT_SMALL_DELTA_ABS {
+            self.small_delta_count += 1;
+        }
+        self.transition_count += 1;
+        self.previous_ts = ts;
+        self.previous_online = online;
+    }
+
+    fn qualifies(&self, run_end: f64) -> bool {
+        if run_end - self.start < SUSPECT_NEAR_FLAT_MIN_DURATION_SECS {
+            return false;
+        }
+        if self.sample_count < 2 || self.transition_count <= 0 {
+            return false;
+        }
+
+        let mean_online = self.sum_online / self.sample_count as f64;
+        if mean_online <= 0.0 {
+            return false;
+        }
+
+        let range_ratio = (self.max_online - self.min_online) as f64 / mean_online;
+        if range_ratio > SUSPECT_NEAR_FLAT_MAX_RANGE_RATIO {
+            return false;
+        }
+
+        let mean_delta_ratio = (self.sum_delta / self.transition_count as f64) / mean_online;
+        if mean_delta_ratio > SUSPECT_NEAR_FLAT_MAX_MEAN_DELTA_RATIO {
+            return false;
+        }
+
+        let small_delta_ratio = self.small_delta_count as f64 / self.transition_count as f64;
+        small_delta_ratio >= SUSPECT_NEAR_FLAT_MIN_SMALL_DELTA_RATIO
+    }
+}
+
+fn push_near_flat_suspect_run(
+    intervals: &mut Vec<Interval>,
+    run: Option<NearFlatRun>,
+    run_end: f64,
+    window_start: f64,
+    window_end: f64,
+) {
+    let Some(active_run) = run else {
+        return;
+    };
+    if !active_run.qualifies(run_end) {
+        return;
+    }
+    push_auto_suspect_interval(
+        intervals,
+        active_run.start,
+        run_end,
+        window_start,
+        window_end,
+    );
+}
+
+fn build_near_flat_suspect_intervals(
+    samples: &[Sample],
+    window_start: f64,
+    window_end: f64,
+    stagnant_min_online: i64,
+) -> Vec<Interval> {
+    if samples.len() < 2 || stagnant_min_online <= 0 {
+        return Vec::new();
+    }
+
+    let min_online = stagnant_min_online.max(SUSPECT_NEAR_FLAT_MIN_ONLINE);
+    let mut intervals = Vec::new();
+    let mut run: Option<NearFlatRun> = None;
+
+    for sample in samples {
+        let Some(online) = sample.online else {
+            push_near_flat_suspect_run(
+                &mut intervals,
+                run.take(),
+                sample.ts,
+                window_start,
+                window_end,
+            );
+            continue;
+        };
+        if online < min_online {
+            push_near_flat_suspect_run(
+                &mut intervals,
+                run.take(),
+                sample.ts,
+                window_start,
+                window_end,
+            );
+            continue;
+        }
+
+        match run.as_mut() {
+            None => {
+                run = Some(NearFlatRun::new(sample.ts, online));
+            }
+            Some(active_run) => {
+                if sample.ts <= active_run.previous_ts {
+                    continue;
+                }
+                if sample.ts - active_run.previous_ts > SUSPECT_NEAR_FLAT_MAX_GAP_SECS {
+                    let run_end = active_run.previous_ts;
+                    push_near_flat_suspect_run(
+                        &mut intervals,
+                        run.take(),
+                        run_end,
+                        window_start,
+                        window_end,
+                    );
+                    run = Some(NearFlatRun::new(sample.ts, online));
+                } else {
+                    active_run.push(sample.ts, online);
+                }
+            }
+        }
+    }
+
+    if let Some(active_run) = run {
+        let run_end = if window_end - active_run.previous_ts > SUSPECT_NEAR_FLAT_MAX_GAP_SECS {
+            active_run.previous_ts
+        } else {
+            window_end
+        };
+        push_near_flat_suspect_run(
+            &mut intervals,
+            Some(active_run),
+            run_end,
+            window_start,
+            window_end,
+        );
+    }
+
+    merge_intervals(&mut intervals)
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -541,6 +722,12 @@ pub fn build_segment_intervals(
         window_end,
     ));
     intervals.extend(build_stagnant_suspect_intervals(
+        &samples,
+        window_start,
+        window_end,
+        stagnant_min_online.max(0),
+    ));
+    intervals.extend(build_near_flat_suspect_intervals(
         &samples,
         window_start,
         window_end,
@@ -743,4 +930,49 @@ fn _compute_effective_average_stats(
     };
 
     (average, coverage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(total_minutes: i64, online: i64) -> Sample {
+        Sample {
+            ts: (total_minutes * 60) as f64,
+            online: Some(online),
+            plugin_maintenance: false,
+            motd_maintenance: false,
+        }
+    }
+
+    #[test]
+    fn near_flat_high_online_plateau_is_auto_suspect() {
+        let plateau = [234, 235, 236, 237, 238, 237, 236, 235];
+        let samples = (0..=(13 * 4))
+            .map(|index| sample(index * 15, plateau[index as usize % plateau.len()]))
+            .collect();
+
+        let intervals = build_segment_intervals(samples, Vec::new(), 0.0, 13.5 * 60.0 * 60.0, 10);
+        let state = resolve_state_at(12.5 * 60.0 * 60.0, intervals);
+
+        assert_eq!(state.status.as_deref(), Some(STATUS_SUSPECT));
+        assert_eq!(state.source.as_deref(), Some("auto"));
+        assert!(state.exclude_from_score);
+    }
+
+    #[test]
+    fn near_flat_wide_swing_is_not_auto_suspect() {
+        let samples = (0..=(13 * 4))
+            .map(|index| {
+                let online = if index % 2 == 0 { 180 } else { 220 };
+                sample(index * 15, online)
+            })
+            .collect();
+
+        let intervals = build_segment_intervals(samples, Vec::new(), 0.0, 13.5 * 60.0 * 60.0, 10);
+        let state = resolve_state_at(12.5 * 60.0 * 60.0, intervals);
+
+        assert_eq!(state.status, None);
+        assert!(!state.exclude_from_score);
+    }
 }
