@@ -6,12 +6,17 @@ name: reusable-release
 # finds them. The manifest route and request shape live here so every product
 # that self-updates shares one source of truth.
 #
-# The caller's build job must upload artifacts named:
-#   leavepulse-launcher-win-portable   -> leavepulse-launcher.exe   (windows-nsis)
-#   leavepulse-launcher-linux-appimage -> *.AppImage                (linux-appimage)
-#   leavepulse-launcher-mac-arm        -> *.dmg                     (macos-arm)
-#   leavepulse-launcher-mac-intel      -> *.dmg                     (macos-intel)
-# plus any extra artifacts to attach to the GitHub Release.
+# The caller's build job uploads, per self-updating platform, a bundle artifact
+# named `leavepulse-bundle-<platform>` containing exactly one `*.zip` with the
+# launcher and daemon executables side by side:
+#   leavepulse-bundle-windows-nsis    -> *.zip { leavepulse-launcher.exe, leavepulse-launcher-daemon.exe }
+#   leavepulse-bundle-linux-appimage  -> *.zip { leavepulse-launcher, leavepulse-launcher-daemon }
+#   leavepulse-bundle-macos-arm       -> *.zip { leavepulse-launcher, leavepulse-launcher-daemon }
+#   leavepulse-bundle-macos-intel     -> *.zip { … }
+# The whole bundle zip is signed (top-level sha256); each member's sha256 rides
+# along as a manifest component so the updater verifies every file it unpacks.
+# Any other artifacts (installers, APKs) are attached to the GitHub Release but
+# are not registered as self-update manifests.
 
 on:
   workflow_call:
@@ -138,39 +143,66 @@ jobs:
           base="${UPDATE_SERVICE_URL%/}"
           cdn_base="${CDN_BASE_URL%/}"
 
-          # platform : artifact whose sha256 we sign and whose bytes we mirror.
-          declare -A artifacts=(
-            ["windows-nsis"]="artifacts/leavepulse-launcher-win-portable/leavepulse-launcher.exe"
-            ["linux-appimage"]="$(ls artifacts/leavepulse-launcher-linux-appimage/*.AppImage 2>/dev/null | head -n1)"
-            ["macos-arm"]="$(ls artifacts/leavepulse-launcher-mac-arm/*.dmg 2>/dev/null | head -n1)"
-            ["macos-intel"]="$(ls artifacts/leavepulse-launcher-mac-intel/*.dmg 2>/dev/null | head -n1)"
+          # Component names the manifest exposes, matched to a member of the
+          # bundle zip by filename stem (extension-agnostic across OSes).
+          declare -A component_for=(
+            ["leavepulse-launcher"]="launcher"
+            ["leavepulse-launcher-daemon"]="daemon"
           )
 
-          for platform in "${!artifacts[@]}"; do
-            file="${artifacts[$platform]}"
-            if [[ -z "$file" || ! -f "$file" ]]; then
-              echo "::warning::no artifact for $platform; skipping manifest"
+          # One bundle artifact per self-updating platform; the platform key is
+          # the directory suffix after `leavepulse-bundle-`.
+          for dir in artifacts/leavepulse-bundle-*/; do
+            [[ -d "$dir" ]] || continue
+            platform="$(basename "$dir")"
+            platform="${platform#leavepulse-bundle-}"
+
+            bundle="$(ls "$dir"*.zip 2>/dev/null | head -n1)"
+            if [[ -z "$bundle" || ! -f "$bundle" ]]; then
+              echo "::warning::no bundle zip for $platform; skipping manifest"
               continue
             fi
-            sha256="$(sha256sum "$file" | cut -d' ' -f1)"
-            file_name="$(basename "$file")"
+
+            bundle_sha="$(sha256sum "$bundle" | cut -d' ' -f1)"
+            file_name="$(basename "$bundle")"
             key="${PRODUCT}/${version}/${platform}/${file_name}"
 
-            echo "Mirroring $file -> cdn/releases/${key}"
-            mc cp "$file" "cdn/releases/${key}" >/dev/null
+            # Per-file sha256 for each known component inside the bundle.
+            workdir="$(mktemp -d)"
+            unzip -q -o "$bundle" -d "$workdir"
+            components_json="{}"
+            for member in "$workdir"/*; do
+              [[ -f "$member" ]] || continue
+              member_name="$(basename "$member")"
+              stem="${member_name%.*}"
+              component="${component_for[$stem]:-}"
+              [[ -n "$component" ]] || continue
+              member_sha="$(sha256sum "$member" | cut -d' ' -f1)"
+              components_json="$(jq -n \
+                --argjson acc "$components_json" \
+                --arg name "$component" \
+                --arg path "$member_name" \
+                --arg sha "$member_sha" \
+                '$acc + {($name): {path: $path, sha256: $sha}}')"
+            done
+            rm -rf "$workdir"
+
+            echo "Mirroring $bundle -> cdn/releases/${key}"
+            mc cp "$bundle" "cdn/releases/${key}" >/dev/null
             download_url="${cdn_base}/${key}"
 
-            echo "Publishing manifest: product=$PRODUCT channel=$channel platform=$platform version=$version"
+            echo "Publishing manifest: product=$PRODUCT channel=$channel platform=$platform version=$version components=$components_json"
             status="$(curl -sS -o /tmp/manifest-resp.json -w '%{http_code}' \
               -X PUT "${base}/v1/${PRODUCT}/updates/manifests/${channel}/${platform}" \
               -H "X-Update-Admin-Token: ${UPDATE_ADMIN_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$(jq -n \
                 --arg version "$version" \
-                --arg sha256 "$sha256" \
+                --arg sha256 "$bundle_sha" \
                 --arg file_name "$file_name" \
                 --arg download_url "$download_url" \
-                '{version: $version, sha256: $sha256, file_name: $file_name, download_url: $download_url}')")"
+                --argjson components "$components_json" \
+                '{version: $version, sha256: $sha256, file_name: $file_name, download_url: $download_url, components: $components}')")"
             if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
               echo "::error::manifest upsert for $platform failed (HTTP $status)"
               cat /tmp/manifest-resp.json
