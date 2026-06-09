@@ -19,11 +19,19 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
     internal Litestar controllers.
     """
 
-    def __init__(self, token: str) -> None:
+    def __init__(
+        self, token: str, exempt_methods: Sequence[str] = (),
+    ) -> None:
         if not token:
             msg = "Internal token must not be empty."
             raise ValueError(msg)
         self._token = token
+        # Fully-qualified method names (e.g.
+        # "/leavepulse.control.v1.AgentGateway/Enroll") served WITHOUT the
+        # internal token — for genuine first-contact RPCs that bootstrap the
+        # token itself. Matched by suffix so the leading slash/package is
+        # optional ("AgentGateway/Enroll" also matches).
+        self._exempt_methods = tuple(exempt_methods)
 
     async def intercept_service(
         self,
@@ -33,6 +41,8 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         # Allow health checks without auth
         method = handler_call_details.method or ""
         if "grpc.health" in method or "grpc.reflection" in method:
+            return await continuation(handler_call_details)
+        if any(method.endswith(exempt) for exempt in self._exempt_methods):
             return await continuation(handler_call_details)
 
         metadata = dict(handler_call_details.invocation_metadata or [])

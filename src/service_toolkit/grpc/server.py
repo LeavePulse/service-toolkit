@@ -98,6 +98,7 @@ def build_grpc_lifecycle(
     service_name: str,
     port: int,
     internal_token: str | None = None,
+    internal_token_exempt_methods: Sequence[str] = (),
     jwt_verifier: JWTVerifier[Any] | None = None,
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
@@ -130,7 +131,12 @@ def build_grpc_lifecycle(
         if internal_token:
             from .interceptors import InternalTokenInterceptor
 
-            interceptors.append(InternalTokenInterceptor(internal_token))
+            interceptors.append(
+                InternalTokenInterceptor(
+                    internal_token,
+                    exempt_methods=internal_token_exempt_methods,
+                )
+            )
 
         if jwt_verifier is not None:
             from .jwt_forwarding import JwtContextServerInterceptor
