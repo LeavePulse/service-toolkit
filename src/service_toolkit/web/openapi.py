@@ -16,7 +16,7 @@ from litestar.openapi.plugins import (
 #: request — unlike the static `x-codeSamples`. The `?v=` is a cache-busting
 #: revision (the publish date); bump it when republishing the bundle via
 #: `cargo xtask publish-scalar` so the edge serves the new copy.
-_SCALAR_BUNDLE_URL = "https://cdn.leavepulse.com/scalar/leavepulse-scalar.js?v=2026-06-11f"
+_SCALAR_BUNDLE_URL = "https://cdn.leavepulse.com/scalar/leavepulse-scalar.js?v=2026-06-12a"
 
 
 #: snippetz client id of the LeavePulse SDK (the default tab in the picker).
