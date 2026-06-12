@@ -42,11 +42,18 @@ logger = logging.getLogger(__name__)
 _FORWARDED_JWT: ContextVar[str | None] = ContextVar(
     "leavepulse_forwarded_jwt", default=None
 )
+_FORWARDED_ON_BEHALF: ContextVar[int | None] = ContextVar(
+    "leavepulse_forwarded_on_behalf", default=None
+)
 _CURRENT_JWT_PAYLOAD: ContextVar[JWTPayload | None] = ContextVar(
     "leavepulse_current_jwt_payload", default=None
 )
+_CURRENT_ON_BEHALF: ContextVar[int | None] = ContextVar(
+    "leavepulse_current_on_behalf", default=None
+)
 
 _AUTHORIZATION_HEADER = "authorization"
+_ON_BEHALF_METADATA = "x-on-behalf-user-id"
 _BEARER_PREFIX = "bearer "
 
 
@@ -63,6 +70,45 @@ def reset_forwarded_jwt(token: Token[str | None]) -> None:
 def forwarded_jwt() -> str | None:
     """Return the JWT currently bound for outbound forwarding, if any."""
     return _FORWARDED_JWT.get()
+
+
+def set_forwarded_on_behalf(user_id: int | None) -> Token[int | None]:
+    """Bind an on-behalf user id forwarded alongside a bot's JWT.
+
+    When a bot account acts on behalf of a resolved human, the bot's own JWT is
+    still forwarded for authentication, but this user id rides in parallel
+    metadata so callee servicers can treat the human as the effective subject.
+    """
+    return _FORWARDED_ON_BEHALF.set(user_id)
+
+
+def reset_forwarded_on_behalf(token: Token[int | None]) -> None:
+    """Restore the previous forwarded on-behalf user id."""
+    _FORWARDED_ON_BEHALF.reset(token)
+
+
+def forwarded_on_behalf() -> int | None:
+    """Return the on-behalf user id bound for outbound forwarding, if any."""
+    return _FORWARDED_ON_BEHALF.get()
+
+
+def current_on_behalf() -> int | None:
+    """Return the on-behalf user id of the current inbound RPC, if any."""
+    return _CURRENT_ON_BEHALF.get()
+
+
+def effective_user_id(payload: JWTPayload | None) -> int:
+    """Return the subject the current RPC acts as.
+
+    For a normal caller this is the JWT ``sub``. For a bot acting on behalf of a
+    resolved human (``payload.is_bot`` and an inbound on-behalf id present), the
+    human is the effective subject. Non-bot callers can never be impersonated:
+    an on-behalf id is ignored unless the authenticated payload is a bot.
+    """
+    on_behalf = _CURRENT_ON_BEHALF.get()
+    if on_behalf is not None and bool(getattr(payload, "is_bot", False)):
+        return on_behalf
+    return user_id_from_payload(payload)
 
 
 def current_jwt_payload() -> JWTPayload | None:
@@ -110,6 +156,11 @@ class JwtForwardingClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
             return await continuation(client_call_details, request)
 
         metadata.append((_AUTHORIZATION_HEADER, f"Bearer {jwt}"))
+        on_behalf = forwarded_on_behalf()
+        if on_behalf is not None and not any(
+            str(key).lower() == _ON_BEHALF_METADATA for key, _ in metadata
+        ):
+            metadata.append((_ON_BEHALF_METADATA, str(on_behalf)))
         updated_details = grpc.aio.ClientCallDetails(
             method=client_call_details.method,
             timeout=client_call_details.timeout,
@@ -167,11 +218,20 @@ def _wrap_handler_with_jwt_context(
     async def _wrapped(request: Any, context: grpc.aio.ServicerContext) -> Any:
         payload = await _verify_metadata_jwt(context, verifier)
         token: Token[JWTPayload | None] | None = None
+        behalf_token: Token[int | None] | None = None
         if payload is not None:
             token = _CURRENT_JWT_PAYLOAD.set(payload)
+            # On-behalf id is only honoured for authenticated bot callers; for
+            # anyone else the metadata is ignored so it cannot impersonate.
+            if bool(getattr(payload, "is_bot", False)):
+                on_behalf = _read_on_behalf(context.invocation_metadata())
+                if on_behalf is not None:
+                    behalf_token = _CURRENT_ON_BEHALF.set(on_behalf)
         try:
             return await inner_unary_unary(request, context)
         finally:
+            if behalf_token is not None:
+                _CURRENT_ON_BEHALF.reset(behalf_token)
             if token is not None:
                 _CURRENT_JWT_PAYLOAD.reset(token)
 
@@ -221,6 +281,21 @@ def _read_authorization(
     return None
 
 
+def _read_on_behalf(
+    metadata: Sequence[tuple[str, str | bytes]] | None,
+) -> int | None:
+    if metadata is None:
+        return None
+    for key, value in metadata:
+        if str(key).lower() == _ON_BEHALF_METADATA:
+            raw = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            try:
+                return int(raw.strip())
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _normalize_metadata(
     metadata: Sequence[tuple[str, str]] | None,
 ) -> list[tuple[str, str]]:
@@ -233,7 +308,12 @@ __all__ = [
     "JwtContextServerInterceptor",
     "JwtForwardingClientInterceptor",
     "current_jwt_payload",
+    "current_on_behalf",
+    "effective_user_id",
     "forwarded_jwt",
+    "forwarded_on_behalf",
     "reset_forwarded_jwt",
+    "reset_forwarded_on_behalf",
     "set_forwarded_jwt",
+    "set_forwarded_on_behalf",
 ]
