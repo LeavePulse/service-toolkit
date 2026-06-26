@@ -99,6 +99,7 @@ def build_grpc_lifecycle(
     port: int,
     internal_token: str | None = None,
     internal_token_exempt_methods: Sequence[str] = (),
+    require_internal_token: bool = True,
     jwt_verifier: JWTVerifier[Any] | None = None,
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
@@ -118,8 +119,28 @@ def build_grpc_lifecycle(
     ``current_jwt_payload`` contextvar for servicers to consume with their
     existing permission helpers.
 
+    *require_internal_token* (default ``True``) — fail closed. Many servicers
+    treat "no inbound JWT" as a trusted internal/admin caller, which is only
+    sound when the :class:`InternalTokenInterceptor` is actually installed to
+    gate the port. The interceptor is installed only when *internal_token* is
+    set, so a missing token would silently open the entire internal/admin
+    surface to anyone who can reach the port. When this flag is ``True`` and no
+    token is configured, startup raises instead of booting wide open. Pass
+    ``require_internal_token=False`` (e.g. ``not settings.debug``) only for
+    services that deliberately run token-less, such as local dev or services
+    whose every RPC is JWT-authenticated.
+
     Returns ``(startup, shutdown)`` async callables.
     """
+
+    if require_internal_token and not internal_token:
+        msg = (
+            f"{service_name}: internal_token is required but not configured. "
+            "Set INTERNAL_TOKEN (service-to-service auth) or pass "
+            "require_internal_token=False to explicitly run the gRPC server "
+            "without internal-token gating (dev / fully JWT-authenticated only)."
+        )
+        raise RuntimeError(msg)
 
     async def _startup() -> None:
         from .metrics import GrpcServerMetricsInterceptor
