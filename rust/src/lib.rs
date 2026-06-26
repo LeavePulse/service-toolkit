@@ -32,6 +32,20 @@ mod text;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 
+// Runtime helpers for Rust services (node agent, poller): env-config parsing,
+// tracing init, a Prometheus `/metrics` server, a typed subprocess runner, and
+// wall-clock helpers. Pure-Rust, no Python dep; gated behind `runtime`.
+#[cfg(feature = "runtime")]
+pub mod env;
+#[cfg(feature = "runtime")]
+pub mod metrics;
+#[cfg(feature = "runtime")]
+pub mod proc;
+#[cfg(feature = "runtime")]
+pub mod telemetry;
+#[cfg(feature = "runtime")]
+pub mod time;
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

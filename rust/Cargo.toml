@@ -21,6 +21,17 @@ python = ["dep:pyo3", "dep:toml", "dep:serde_json"]
 extension-module = ["pyo3/extension-module"]
 # gRPC client helpers for Rust consumers (no Python dependency).
 grpc = ["dep:tonic", "dep:prost", "dep:tonic-types"]
+# Runtime helpers for Rust services: env-config parsing, tracing init, a
+# Prometheus /metrics server, a typed subprocess runner, wall-clock helpers.
+runtime = [
+    "dep:tokio",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+    "dep:prometheus",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+]
 # Native `lp-ci` binary for Rust repos. No extra deps — the CI engine is pure
 # std — so this builds standalone with `--no-default-features --features cli`.
 cli = []
@@ -34,6 +45,16 @@ serde_json = { version = "1", optional = true }
 tonic = { version = "0.12", optional = true }
 prost = { version = "0.13", optional = true }
 tonic-types = { version = "0.12", optional = true }
+
+# `runtime` feature deps. Versions match the consumer services (control-agent /
+# server-poller) so the dependency graph stays unified.
+tokio = { version = "1", features = ["rt", "net", "macros"], optional = true }
+hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+prometheus = { version = "0.13", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # Native CI gate for Rust consumers. Gated behind `cli` so the default
 # (maturin/python) and grpc builds don't produce it.
