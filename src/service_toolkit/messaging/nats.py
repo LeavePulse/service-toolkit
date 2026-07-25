@@ -107,14 +107,14 @@ class NATSSettings:
     ) -> "NATSSettings":
         """Create settings from environment variables.
 
-        Prefers :mod:`env_settings` when available to keep configuration consistent
+        Prefers :mod:`msgspec_conf` when available to keep configuration consistent
         with other services, but falls back to simple environment parsing and still
         allows manual instantiation of :class:`NATSSettings`.
         """
 
         base_settings_cls: type[Any] | None
         try:
-            from env_settings import BaseSettings as _BaseSettings  # type: ignore
+            from msgspec_conf import BaseSettings as _BaseSettings  # type: ignore
         except ModuleNotFoundError:  # pragma: no cover - optional dependency
             base_settings_cls = None
         else:

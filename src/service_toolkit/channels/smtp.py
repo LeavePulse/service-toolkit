@@ -67,12 +67,12 @@ class SmtpSettings:
     ) -> SmtpSettings:
         """Create settings from environment variables.
 
-        Prefers :mod:`env_settings` (the optional ``env`` extra) to stay
+        Prefers :mod:`msgspec_conf` (the optional ``env`` extra) to stay
         consistent with the other toolkit settings; falls back to plain
         ``os.environ`` parsing so the channel works without that extra.
         """
         try:
-            from env_settings import BaseSettings as _BaseSettings  # type: ignore
+            from msgspec_conf import BaseSettings as _BaseSettings  # type: ignore
         except ModuleNotFoundError:
             base_settings_cls = None
         else:

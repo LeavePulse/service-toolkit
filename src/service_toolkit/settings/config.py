@@ -4,13 +4,13 @@ Provides base classes for common configuration blocks (database, internal
 token, Redis coordination, gRPC) so that individual services only define their
 service-specific settings.
 
-All classes inherit from :class:`env_settings.BaseSettings` and work with
+All classes inherit from :class:`msgspec_conf.BaseSettings` and work with
 the standard ``BaseSettings.load(prefix=...)`` pattern.
 """
 
 from __future__ import annotations
 
-from env_settings import BaseSettings
+from msgspec_conf import BaseSettings
 
 
 class DatabaseSettings(BaseSettings):

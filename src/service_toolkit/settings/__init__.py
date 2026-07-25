@@ -28,7 +28,7 @@ def __getattr__(name: str):
     try:
         module = importlib.import_module(module_name, __name__)
     except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
-        if exc.name == "env_settings":
+        if exc.name == "msgspec_conf":
             raise ModuleNotFoundError(
                 "Settings helpers require the optional 'env' extra. "
                 "Install with 'pip install service-toolkit[env]'."

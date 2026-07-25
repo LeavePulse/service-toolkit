@@ -185,7 +185,7 @@ def _translate_optional_import_error(
 ) -> ModuleNotFoundError:
     missing = exc.name or ""
 
-    if missing == "env_settings":
+    if missing == "msgspec_conf":
         return ModuleNotFoundError(
             "Config helpers require the optional 'env' extra. "
             "Install with 'pip install service-toolkit[env]'."

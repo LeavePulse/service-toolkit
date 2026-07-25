@@ -59,7 +59,7 @@ def __getattr__(name: str):
                 "Redis-backed state helpers require the optional 'redis' extra. "
                 "Install with 'pip install service-toolkit[redis]'."
             ) from exc
-        if exc.name == "env_settings":
+        if exc.name == "msgspec_conf":
             raise ModuleNotFoundError(
                 "Redis-backed state helpers require the optional 'env' extra. "
                 "Install with 'pip install service-toolkit[env]'."
