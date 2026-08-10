@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from service_toolkit.grpc.calls import apply_present_fields, present_fields
+import grpc
+import pytest
+
+from service_toolkit.grpc.calls import (
+    _UPSTREAM_FAILURE_CODES,
+    apply_present_fields,
+    present_fields,
+    translate_grpc_error,
+)
 
 
 class _Unset:
@@ -56,3 +64,45 @@ def test_apply_present_fields_can_coerce_values() -> None:
     apply_present_fields(request, coerce=str, owner_id=42)
 
     assert request.owner_id == "42"
+
+
+class _RpcError:
+    """Stand-in for ``AioRpcError``; the translator only reads these two."""
+
+    def __init__(self, code: grpc.StatusCode, details: str = "") -> None:
+        self._code = code
+        self._details = details
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+
+@pytest.mark.parametrize("code", _UPSTREAM_FAILURE_CODES)
+def test_upstream_failures_translate_to_service_unavailable(
+    code: grpc.StatusCode,
+) -> None:
+    error = translate_grpc_error(_RpcError(code), resource="launcher")  # type: ignore[arg-type]
+
+    assert getattr(error, "status_code", None) == 503
+    assert "launcher" in str(error)
+
+
+def test_upstream_failure_keeps_upstream_detail() -> None:
+    error = translate_grpc_error(
+        _RpcError(grpc.StatusCode.UNAVAILABLE, "connection refused"),  # type: ignore[arg-type]
+        resource="launcher",
+    )
+
+    assert "connection refused" in str(error)
+
+
+def test_caller_errors_are_not_reported_as_unavailable() -> None:
+    error = translate_grpc_error(
+        _RpcError(grpc.StatusCode.INVALID_ARGUMENT, "bad id"),  # type: ignore[arg-type]
+        resource="launcher",
+    )
+
+    assert getattr(error, "status_code", None) != 503

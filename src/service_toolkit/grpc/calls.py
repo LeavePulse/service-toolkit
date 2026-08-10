@@ -27,6 +27,19 @@ import grpc
 _T = TypeVar("_T")
 
 
+#: Codes that mean "the upstream service failed us", not "the caller sent
+#: something wrong". Without them these fall through to the invalid-argument
+#: fallback, which raises a bare ``ValueError`` — no HTTP status attached, so
+#: the web layer reports a blank 500 and the real cause (an upstream that is
+#: down, overloaded or timing out) never reaches the logs or the client.
+_UPSTREAM_FAILURE_CODES = (
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.RESOURCE_EXHAUSTED,
+    grpc.StatusCode.INTERNAL,
+)
+
+
 def _resource_label(resource: str | None, resource_id: object = None) -> str:
     label = resource or "resource"
     if resource_id is None:
@@ -70,11 +83,22 @@ def _fallback_already_exists(
     return ValueError(detail or "Resource already exists")
 
 
+def _fallback_unavailable(
+    detail: str,
+    resource: str | None,
+    rid: object,
+) -> Exception:
+    del rid
+    return ConnectionError(detail or f"{resource or 'upstream service'} is unavailable")
+
+
 def _default_translation() -> dict[grpc.StatusCode, Any]:
     try:
         from awesome_errors import (  # type: ignore[import-not-found]
+            AppError,
             AuthPermissionDeniedError,
             AuthRequiredError,
+            ErrorCode,
             InvalidInputError,
             ResourceNotFoundError,
         )
@@ -85,24 +109,33 @@ def _default_translation() -> dict[grpc.StatusCode, Any]:
             grpc.StatusCode.UNAUTHENTICATED: _fallback_auth_required,
             grpc.StatusCode.PERMISSION_DENIED: _fallback_permission_denied,
             grpc.StatusCode.ALREADY_EXISTS: _fallback_already_exists,
+            **dict.fromkeys(_UPSTREAM_FAILURE_CODES, _fallback_unavailable),
         }
+
+    def unavailable(detail: str, resource: str | None, rid: object) -> Exception:
+        del rid
+        return AppError(
+            ErrorCode.SERVICE_UNAVAILABLE,
+            detail or f"{resource or 'upstream service'} is unavailable",
+        )
 
     return {
         grpc.StatusCode.NOT_FOUND: lambda detail, resource, rid: ResourceNotFoundError(
             resource or "resource", str(rid) if rid is not None else None
         ),
-        grpc.StatusCode.INVALID_ARGUMENT: lambda detail, resource, rid: InvalidInputError(
-            detail or "Invalid argument"
+        grpc.StatusCode.INVALID_ARGUMENT: lambda detail, resource, rid: (
+            InvalidInputError(detail or "Invalid argument")
         ),
-        grpc.StatusCode.UNAUTHENTICATED: lambda detail, resource, rid: AuthRequiredError(
-            detail or "Authentication required"
+        grpc.StatusCode.UNAUTHENTICATED: lambda detail, resource, rid: (
+            AuthRequiredError(detail or "Authentication required")
         ),
-        grpc.StatusCode.PERMISSION_DENIED: lambda detail, resource, rid: AuthPermissionDeniedError(
-            detail or "Insufficient permissions"
+        grpc.StatusCode.PERMISSION_DENIED: lambda detail, resource, rid: (
+            AuthPermissionDeniedError(detail or "Insufficient permissions")
         ),
         grpc.StatusCode.ALREADY_EXISTS: lambda detail, resource, rid: InvalidInputError(
             detail or "Resource already exists"
         ),
+        **dict.fromkeys(_UPSTREAM_FAILURE_CODES, unavailable),
     }
 
 
@@ -160,6 +193,7 @@ async def grpc_call(
 # ---------------------------------------------------------------------------
 # proto3 optional-field helpers.
 # ---------------------------------------------------------------------------
+
 
 def _field_is_present(message: Any, field: str) -> bool:
     """Whether ``field`` carries a value.
