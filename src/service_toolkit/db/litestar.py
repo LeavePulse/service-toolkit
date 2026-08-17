@@ -47,10 +47,26 @@ class DBConfig:
         )
 
 
+#: Verify a pooled connection before handing it out. The cost is one cheap
+#: round-trip per checkout; the alternative is that the FIRST query after the
+#: database moved, restarted or dropped the connection fails in front of a
+#: user. A pool hands back whatever it cached — it does not re-resolve DNS or
+#: notice that the server it dialled is gone.
+DEFAULT_POOL_PRE_PING = True
+
+#: Retire a connection after this long, so a pool cannot pin an address
+#: indefinitely. Without it a long-lived connection outlives the machine it was
+#: opened to: after a database is moved, healthy-looking connections keep
+#: pointing at the old host until something forces them closed.
+DEFAULT_POOL_RECYCLE_SECONDS = 1800
+
+
 def build_db_config(
     *,
     connection_string: str,
     echo: bool = False,
+    pool_pre_ping: bool = DEFAULT_POOL_PRE_PING,
+    pool_recycle: int = DEFAULT_POOL_RECYCLE_SECONDS,
 ) -> DBConfig:
     """Create the standard database configuration used by all services.
 
@@ -60,8 +76,18 @@ def build_db_config(
         Full async database URL (e.g. ``postgresql+asyncpg://…``).
     echo:
         Whether to echo SQL statements (maps to ``EngineConfig.echo``).
+    pool_pre_ping:
+        Check a connection is alive before use. On by default — see
+        :data:`DEFAULT_POOL_PRE_PING`.
+    pool_recycle:
+        Seconds after which a pooled connection is replaced. See
+        :data:`DEFAULT_POOL_RECYCLE_SECONDS`.
     """
-    engine_config = EngineConfig(echo=echo)
+    engine_config = EngineConfig(
+        echo=echo,
+        pool_pre_ping=pool_pre_ping,
+        pool_recycle=pool_recycle,
+    )
     sqlalchemy_config = SQLAlchemyAsyncConfig(
         connection_string=connection_string,
         engine_config=engine_config,
@@ -72,4 +98,9 @@ def build_db_config(
     return DBConfig(engine_config=engine_config, sqlalchemy_config=sqlalchemy_config)
 
 
-__all__ = ["DBConfig", "build_db_config"]
+__all__ = [
+    "DEFAULT_POOL_PRE_PING",
+    "DEFAULT_POOL_RECYCLE_SECONDS",
+    "DBConfig",
+    "build_db_config",
+]

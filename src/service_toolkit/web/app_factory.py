@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from awesome_errors import ErrorResponseFormat
 from litestar import Litestar
 from litestar.config.cors import CORSConfig
+from litestar.datastructures import State
 from litestar.middleware.base import DefineMiddleware
 from litestar.openapi.config import OpenAPIConfig
 from litestar.openapi.spec import Components, SecurityScheme
@@ -43,7 +44,7 @@ from ..errors.awesome_errors import (
 )
 from .cors import resolve_cors_origins
 from .etag import etag_middleware
-from .health import HealthController
+from .health import HealthController, HealthState, sqlalchemy_check
 from ..observability.logging import (
     build_standard_logging_config,
     request_context_middleware,
@@ -143,6 +144,15 @@ def create_service_app(
     # (live endpoints: online status, telemetry, aggregates).
     enable_etag: bool = True,
     etag_exclude_patterns: Sequence[str] = (),
+    # Readiness. A database config given above is checked automatically; add
+    # anything else this service cannot serve without (NATS, an upstream gRPC
+    # service) as name → async check returning None when healthy, or a short
+    # reason when not. A rollout is gated on these, so listing something
+    # optional here turns a degraded dependency into a failed deploy.
+    health_checks: Mapping[str, Callable[[], Any]] | None = None,
+    # Build identity reported by /health, so "what is actually running" is
+    # answerable from the service itself rather than by matching image digests.
+    version: str = "",
 ) -> Litestar:
     """Create a fully-configured Litestar application.
 
@@ -270,7 +280,22 @@ def create_service_app(
     )
 
     # ── Build app ────────────────────────────────────────────────────
+    # ── Readiness state ──────────────────────────────────────────────
+    # The database is checked without the service asking: the factory already
+    # has its config, and "can I reach my own database" is the check every
+    # service would otherwise write for itself.
+    checks: dict[str, Callable[[], Any]] = {}
+    if sqlalchemy_config is not None:
+        checks["postgres"] = sqlalchemy_check(sqlalchemy_config)
+    checks.update(health_checks or {})
+    health_state = HealthState(
+        service_name=service_name,
+        version=version,
+        checks=checks,  # type: ignore[arg-type]
+    )
+
     app = Litestar(
+        state=State({"health": health_state}),
         route_handlers=handlers,
         plugins=plugins,
         openapi_config=openapi_config,
