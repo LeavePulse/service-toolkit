@@ -9,7 +9,13 @@ __all__ = [
     "DatabaseSettings",
     "GrpcSettings",
     "InternalSettings",
+    "MissingRequirement",
+    "Need",
     "RedisCoordinationSettings",
+    "check_configured",
+    "needs",
+    "prefixes_for",
+    "require_configured",
 ]
 
 _EXPORT_MODULES = {
@@ -17,6 +23,14 @@ _EXPORT_MODULES = {
     "GrpcSettings": ".config",
     "InternalSettings": ".config",
     "RedisCoordinationSettings": ".config",
+    # `needs` depends on nothing optional — a service can declare what it needs
+    # without the env extra installed, and without a control-plane to answer.
+    "MissingRequirement": ".needs",
+    "Need": ".needs",
+    "check_configured": ".needs",
+    "needs": ".needs",
+    "prefixes_for": ".needs",
+    "require_configured": ".needs",
 }
 
 
