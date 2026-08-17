@@ -27,6 +27,7 @@ Usage::
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from awesome_errors import ErrorResponseFormat
@@ -152,6 +153,10 @@ def create_service_app(
     health_checks: Mapping[str, Callable[[], Any]] | None = None,
     # Build identity reported by /health, so "what is actually running" is
     # answerable from the service itself rather than by matching image digests.
+    # Defaults to $SERVICE_VERSION, which the control plane sets to the deployed
+    # tag — a container knows its env but never the tag it was pulled by, so
+    # this is the one place the answer can come from without asking the service
+    # to thread it through.
     version: str = "",
 ) -> Litestar:
     """Create a fully-configured Litestar application.
@@ -290,7 +295,7 @@ def create_service_app(
     checks.update(health_checks or {})
     health_state = HealthState(
         service_name=service_name,
-        version=version,
+        version=version or os.environ.get("SERVICE_VERSION", ""),
         checks=checks,  # type: ignore[arg-type]
     )
 

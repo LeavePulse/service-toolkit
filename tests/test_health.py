@@ -197,6 +197,40 @@ def test_the_probes_work_on_a_real_app() -> None:
         assert client.get("/health/").json() == {"status": "healthy"}
 
 
+def test_version_comes_from_the_environment_when_not_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control plane sets SERVICE_VERSION to the deployed tag.
+
+    A container knows its env but never the tag it was pulled by, so without
+    this the field is empty and "which build is this" stays unanswerable from
+    the service itself.
+    """
+    from service_toolkit.web.app_factory import create_service_app
+
+    monkeypatch.setenv("SERVICE_VERSION", "sha-deadbee")
+    app = create_service_app(
+        service_name="probe-service",
+        openapi_title="probe",
+        route_handlers=[],
+    )
+
+    assert app.state.health.version == "sha-deadbee"
+    assert app.state.health.service_name == "probe-service"
+
+    # An explicit argument still wins: a service that pins its own version is
+    # not overridden by the deploy tag. Built under a different service name
+    # because Prometheus metrics register globally per name and a second app
+    # sharing one would collide.
+    pinned = create_service_app(
+        service_name="pinned-service",
+        openapi_title="probe",
+        route_handlers=[],
+        version="1.2.3",
+    )
+    assert pinned.state.health.version == "1.2.3"
+
+
 @pytest.mark.asyncio
 async def test_sqlalchemy_check_round_trips_a_statement() -> None:
     """The check has to ASK the server. A pooled connection can be checked out
