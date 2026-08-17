@@ -165,6 +165,38 @@ async def test_the_answer_is_cached_so_polling_does_not_hammer_the_database() ->
     assert calls["n"] == 1
 
 
+def test_the_probes_work_on_a_real_app() -> None:
+    """Exercised through an actual app, not by calling the handlers.
+
+    Calling them directly passes whatever object the test hands over, so it
+    cannot catch how Litestar itself treats the reserved ``state`` kwarg — it
+    rejects any annotation that is not a State subclass, and the whole app
+    fails to build. Every unit test above stayed green while every service
+    refused to start.
+    """
+    from litestar.datastructures import State as LitestarState
+    from litestar.testing import create_test_client
+
+    app_state = LitestarState({"health": HealthState(checks={"postgres": _down()})})  # type: ignore[arg-type]
+    with create_test_client(
+        route_handlers=[HealthController], state=app_state
+    ) as client:
+        assert client.get("/health/live").status_code == 200
+        # A down dependency has to surface as 503 over HTTP, since that is what
+        # the deploy gate and a load balancer actually read.
+        assert client.get("/health/ready").status_code == 503
+        assert client.get("/health/").json()["status"] == "degraded"
+
+    healthy = LitestarState({"health": HealthState(checks={"postgres": _ok()})})  # type: ignore[arg-type]
+    with create_test_client(route_handlers=[HealthController], state=healthy) as client:
+        assert client.get("/health/ready").status_code == 200
+
+    # And an app that registered no state keeps the old unconditional answers.
+    with create_test_client(route_handlers=[HealthController]) as client:
+        assert client.get("/health/ready").status_code == 200
+        assert client.get("/health/").json() == {"status": "healthy"}
+
+
 @pytest.mark.asyncio
 async def test_sqlalchemy_check_round_trips_a_statement() -> None:
     """The check has to ASK the server. A pooled connection can be checked out

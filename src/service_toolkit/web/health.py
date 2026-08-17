@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from litestar import Controller, get
+from litestar.datastructures import State
 from litestar.exceptions import ServiceUnavailableException
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,7 @@ class HealthController(Controller):
     tags = ["Health"]
 
     @get("/", include_in_schema=False, summary="Service health")
-    async def health(self, state: Any) -> dict[str, Any]:
+    async def health(self, state: State) -> dict[str, Any]:
         """Everything known about this instance, for a human or a panel."""
         health_state = _state_of(state)
         if health_state is None:
@@ -157,7 +158,7 @@ class HealthController(Controller):
         }
 
     @get("/ready", include_in_schema=False, summary="Readiness probe")
-    async def readiness(self, state: Any) -> dict[str, Any]:
+    async def readiness(self, state: State) -> dict[str, Any]:
         """503 when a dependency is down, so a rollout gate can act on it."""
         health_state = _state_of(state)
         if health_state is None:
@@ -177,7 +178,7 @@ class HealthController(Controller):
         return {"status": "alive"}
 
 
-def _state_of(state: Any) -> HealthState | None:
+def _state_of(state: State) -> HealthState | None:
     """The app's HealthState, or None for an app that never registered one.
 
     Absent state means the old unconditional behaviour, so a service that has
