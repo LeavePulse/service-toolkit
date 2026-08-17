@@ -31,6 +31,11 @@ from advanced_alchemy.extensions.litestar.plugins.init.config.engine import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+# Re-exported: the pool defaults live next to the plain SQLAlchemy helpers so a
+# service that builds its own engine can import them WITHOUT pulling in
+# advanced_alchemy, which only the Litestar plugin path needs.
+from .sqlalchemy import DEFAULT_POOL_PRE_PING, DEFAULT_POOL_RECYCLE_SECONDS
+
 
 @dataclass(frozen=True, slots=True)
 class DBConfig:
@@ -45,20 +50,6 @@ class DBConfig:
             async_sessionmaker[AsyncSession],
             self.sqlalchemy_config.create_session_maker(),
         )
-
-
-#: Verify a pooled connection before handing it out. The cost is one cheap
-#: round-trip per checkout; the alternative is that the FIRST query after the
-#: database moved, restarted or dropped the connection fails in front of a
-#: user. A pool hands back whatever it cached — it does not re-resolve DNS or
-#: notice that the server it dialled is gone.
-DEFAULT_POOL_PRE_PING = True
-
-#: Retire a connection after this long, so a pool cannot pin an address
-#: indefinitely. Without it a long-lived connection outlives the machine it was
-#: opened to: after a database is moved, healthy-looking connections keep
-#: pointing at the old host until something forces them closed.
-DEFAULT_POOL_RECYCLE_SECONDS = 1800
 
 
 def build_db_config(
