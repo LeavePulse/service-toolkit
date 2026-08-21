@@ -210,3 +210,51 @@ async def test_leader_lease_calls_on_lost() -> None:
 
     await asyncio.sleep(0.15)
     assert calls == ["lost"]
+
+
+# ── one source of truth for where Redis is ───────────────────────────────────
+
+
+def test_settings_can_be_built_from_the_loaded_block() -> None:
+    """The address is declared in `settings.redis` and read from there. Calling
+    `from_env` instead re-reads the environment, so the declared settings and
+    the actual connection could disagree — and a control-plane filling the
+    declared ones would not change where the client connects."""
+    from service_toolkit.settings.config import RedisCoordinationSettings
+    from service_toolkit.state.redis import RedisSettings
+
+    block = RedisCoordinationSettings(
+        enabled=True, url="redis://:pw@10.200.0.102:6379/0"
+    )
+
+    assert RedisSettings.from_block(block).url == "redis://:pw@10.200.0.102:6379/0"
+
+
+def test_a_host_and_port_block_is_accepted_too() -> None:
+    """RedisSettings takes either spelling; the block must not force one."""
+    from service_toolkit.settings.config import RedisCoordinationSettings
+    from service_toolkit.state.redis import RedisSettings
+
+    settings = RedisSettings.from_block(
+        RedisCoordinationSettings(enabled=True, host="redis", port=6380)
+    )
+
+    assert (settings.host, settings.port) == ("redis", 6380)
+
+
+def test_fields_the_block_does_not_carry_keep_their_defaults() -> None:
+    """A coordination block has no timeouts; those must not become None."""
+    from service_toolkit.settings.config import RedisCoordinationSettings
+    from service_toolkit.state.redis import RedisSettings
+
+    settings = RedisSettings.from_block(RedisCoordinationSettings(host="redis"))
+
+    assert settings.socket_timeout > 0
+
+
+def test_the_block_knows_whether_an_address_was_given() -> None:
+    from service_toolkit.settings.config import RedisCoordinationSettings
+
+    assert not RedisCoordinationSettings(enabled=True).configured
+    assert RedisCoordinationSettings(url="redis://x").configured
+    assert RedisCoordinationSettings(host="redis").configured

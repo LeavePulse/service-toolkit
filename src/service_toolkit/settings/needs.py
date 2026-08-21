@@ -42,6 +42,8 @@ involved:
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -62,19 +64,25 @@ class MissingRequirement(RuntimeError):
 #: * ``endpoint``  — one ``ENDPOINT`` holding "host:port" (MinIO)
 #: * ``target``    — one ``TARGET`` holding "host:port" (a gRPC peer)
 #: * ``servers``   — one ``SERVERS`` holding a URL list (NATS)
+#: * ``url_or_host`` — either a whole ``URL`` or a ``HOST``/``PORT`` pair (Redis)
 #:
 #: ``endpoint`` and ``target`` differ only in the variable they read. Both
 #: exist because the fleet already uses both spellings, and a mechanism that
 #: renamed live variables to suit itself would be a migration, not a
 #: declaration.
-AddressShape = Literal["host_port", "endpoint", "target", "servers"]
+AddressShape = Literal["host_port", "endpoint", "target", "servers", "url_or_host"]
 
-#: The variable each shape reads its address from.
-_ADDRESS_KEYS: dict[str, str] = {
-    "host_port": "HOST",
-    "endpoint": "ENDPOINT",
-    "target": "TARGET",
-    "servers": "SERVERS",
+#: The variables each shape may carry its address in, in the order a reader
+#: should prefer them. A need is configured when ANY of them is set: Redis
+#: accepts a whole URL (credentials and database included) or a plain host, and
+#: demanding the one the service happens not to use would report a working
+#: dependency as unconfigured.
+_ADDRESS_KEYS: dict[str, tuple[str, ...]] = {
+    "host_port": ("HOST",),
+    "endpoint": ("ENDPOINT",),
+    "target": ("TARGET",),
+    "servers": ("SERVERS",),
+    "url_or_host": ("URL", "HOST"),
 }
 
 
@@ -129,23 +137,30 @@ class Need:
 
     @property
     def host_key(self) -> str:
-        """The variable that must be set for this need to be configured.
+        """The variable a reader should reach for first.
 
         Whichever one carries the address: ``HOST`` for a host/port pair,
-        ``ENDPOINT`` for a single "host:port", ``SERVERS`` for a URL list.
+        ``ENDPOINT`` for a single "host:port", ``SERVERS`` for a URL list,
+        ``URL`` for something that accepts a whole connection string.
         """
-        return f"{self.env_prefix}{_ADDRESS_KEYS[self.address]}"
+        return f"{self.env_prefix}{_ADDRESS_KEYS[self.address][0]}"
 
     @property
     def address_keys(self) -> tuple[str, ...]:
-        """Every variable this need reads its address from, address first.
+        """Every variable this need may read its address from, preferred first.
 
-        A host/port pair also reads a PORT; the other shapes carry the port
-        inside the one value, so there is nothing else to read.
+        A host/port pair also reads a PORT; the single-value shapes carry the
+        port inside the value, so there is nothing else to read.
         """
-        if self.address == "host_port":
-            return (self.host_key, f"{self.env_prefix}PORT")
-        return (self.host_key,)
+        keys = tuple(f"{self.env_prefix}{k}" for k in _ADDRESS_KEYS[self.address])
+        if self.address in {"host_port", "url_or_host"}:
+            return (*keys, f"{self.env_prefix}PORT")
+        return keys
+
+    @property
+    def accepted_keys(self) -> tuple[str, ...]:
+        """The variables that would satisfy this need — any one of them."""
+        return tuple(f"{self.env_prefix}{k}" for k in _ADDRESS_KEYS[self.address])
 
 
 #: Near-misses of this function's own keywords. A constraint by one of these
@@ -231,7 +246,8 @@ def check_configured(
     return [
         need
         for need in requires
-        if not need.optional and not (env.get(need.host_key) or "").strip()
+        if not need.optional
+        and not any((env.get(key) or "").strip() for key in need.accepted_keys)
     ]
 
 
@@ -245,9 +261,34 @@ def require_configured(requires: list[Need], env: dict[str, str]) -> None:
     missing = check_configured(requires, env)
     if not missing:
         return
-    detail = ", ".join(f"{n.capability} (set {n.host_key})" for n in missing)
+    detail = ", ".join(
+        f"{n.capability} (set {' or '.join(n.accepted_keys)})" for n in missing
+    )
     msg = f"unconfigured dependencies: {detail}"
     raise MissingRequirement(msg)
+
+
+def startup_check(requires: list[Need]) -> Callable[[], None]:
+    """A no-argument startup hook that verifies *requires* against the process
+    environment.
+
+    Litestar decides whether to hand a lifespan hook the app by looking at its
+    signature: ``hook(self) if inspect.signature(hook).parameters else hook()``.
+    A checker written as ``check(env=None)`` therefore receives the ``Litestar``
+    instance as ``env`` — and every service that registered one crash-looped on
+    startup with ``'Litestar' object has no attribute 'get'``.
+
+    Taking no parameters is the whole point: the framework cannot pass anything
+    it should not, and the check still reads the real environment at the moment
+    it runs.
+
+        app = create_app(on_startup=[startup_check(REQUIRES), ...])
+    """
+
+    def check() -> None:
+        require_configured(requires, dict(os.environ))
+
+    return check
 
 
 __all__ = [
@@ -258,4 +299,5 @@ __all__ = [
     "needs",
     "prefixes_for",
     "require_configured",
+    "startup_check",
 ]

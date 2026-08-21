@@ -98,6 +98,38 @@ class RedisSettings:
     max_connections: int | None = None
 
     @classmethod
+    def from_block(cls, block: Any, **overrides: Any) -> "RedisSettings":
+        """Build from an already-loaded settings block (``settings.redis``).
+
+        The alternative is calling :meth:`from_env`, which reads the environment
+        a second time — so the declared settings and the connection could
+        disagree, and a control-plane filling the declared ones would have no
+        effect on where the client actually connects. Reading the block the
+        service already loaded removes that second source of truth.
+
+        Fields the block does not carry keep their defaults; pass ``overrides``
+        for anything the caller resolves itself.
+        """
+        values: dict[str, Any] = {}
+        for name in (
+            "url",
+            "host",
+            "port",
+            "db",
+            "username",
+            "password",
+            "socket_connect_timeout",
+            "socket_timeout",
+            "health_check_interval",
+            "max_connections",
+        ):
+            value = getattr(block, name, None)
+            if value is not None:
+                values[name] = value
+        values.update(overrides)
+        return cls(**values)
+
+    @classmethod
     def from_env(
         cls,
         env: Mapping[str, str] | None = None,

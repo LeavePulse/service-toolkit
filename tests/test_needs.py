@@ -19,6 +19,7 @@ from service_toolkit.settings.needs import (
     needs,
     prefixes_for,
     require_configured,
+    startup_check,
 )
 
 
@@ -231,3 +232,71 @@ def test_a_deliberate_constraint_still_passes_through() -> None:
     need = needs("postgres", version="16", tls="required")
 
     assert need.constraints == {"version": "16", "tls": "required"}
+
+
+# ── a dependency that accepts either spelling ────────────────────────────────
+
+
+def test_redis_is_satisfied_by_a_whole_url() -> None:
+    """REDIS_URL carries credentials and database in one string, which is how
+    the fleet configures it."""
+    require_configured(
+        [needs("redis", address="url_or_host")],
+        {"REDIS_URL": "redis://:pw@10.200.0.102:6379/0"},
+    )
+
+
+def test_redis_is_equally_satisfied_by_a_plain_host() -> None:
+    """RedisSettings accepts both. Demanding the one the service happens not to
+    use would report a working dependency as unconfigured."""
+    require_configured(
+        [needs("redis", address="url_or_host")],
+        {"REDIS_HOST": "redis"},
+    )
+
+
+def test_an_unconfigured_redis_names_both_ways_to_fix_it() -> None:
+    with pytest.raises(MissingRequirement) as exc:
+        require_configured([needs("redis", address="url_or_host")], {})
+
+    message = str(exc.value)
+    assert "REDIS_URL" in message
+    assert "REDIS_HOST" in message
+
+
+def test_a_shape_with_one_spelling_accepts_only_that_one() -> None:
+    """The either/or must not leak into shapes that have a single answer."""
+    assert needs("minio", address="endpoint").accepted_keys == ("MINIO_ENDPOINT",)
+    assert needs("postgres").accepted_keys == ("POSTGRES_HOST",)
+
+
+# ── the startup hook Litestar will actually call ─────────────────────────────
+
+
+def test_the_startup_hook_takes_no_parameters() -> None:
+    """Litestar passes the app to any lifespan hook whose signature has a
+    parameter: `hook(self) if inspect.signature(hook).parameters else hook()`.
+
+    A checker written as `check(env=None)` therefore received the Litestar
+    instance as its env and crash-looped every service that registered one with
+    "'Litestar' object has no attribute 'get'". Taking nothing is what makes
+    that impossible.
+    """
+    import inspect
+
+    hook = startup_check([needs("postgres")])
+
+    assert not inspect.signature(hook).parameters
+
+
+def test_the_startup_hook_reads_the_real_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POSTGRES_HOST", raising=False)
+    hook = startup_check([needs("postgres")])
+
+    with pytest.raises(MissingRequirement):
+        hook()
+
+    monkeypatch.setenv("POSTGRES_HOST", "db")
+    hook()

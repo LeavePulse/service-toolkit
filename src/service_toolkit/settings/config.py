@@ -46,13 +46,31 @@ class InternalSettings(BaseSettings):
 
 
 class RedisCoordinationSettings(BaseSettings):
-    """Optional Redis configuration used for leader election / coordination.
+    """Redis configuration: whether to use it, and where it is.
 
     Default ``prefix`` when loading: ``REDIS_``.
+
+    The address lives here rather than only inside
+    :meth:`service_toolkit.state.redis.RedisSettings.from_env`, which reads the
+    environment directly. Two readers of the same ``REDIS_`` prefix meant the
+    declared settings knew whether Redis was on but not where it was — so a
+    control-plane could see the switch and not the address it has to fill.
+
+    Either spelling works, as ``RedisSettings`` accepts both: a whole ``URL``
+    (credentials and database included), or ``HOST``/``PORT``.
     """
 
     enabled: bool = False
     leader_ttl_seconds: float = 30.0
+
+    url: str | None = None
+    host: str | None = None
+    port: int | None = None
+
+    @property
+    def configured(self) -> bool:
+        """Whether an address was given at all, by either spelling."""
+        return bool((self.url or "").strip() or (self.host or "").strip())
 
 
 class GrpcSettings(BaseSettings):
