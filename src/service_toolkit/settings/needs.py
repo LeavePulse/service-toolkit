@@ -14,8 +14,14 @@ So the service declares the need and reads the answer:
             needs("postgres", prefix="POSTGRES_"),
             needs("nats", prefix="NATS_"),
             needs("redis", prefix="REDIS_", optional=True),
+            needs("nats", address="servers"),
         ],
     )
+
+Not every dependency is a host and a port. NATS is given a list of URLs, MinIO
+and a gRPC peer one "host:port" string — so a need says which shape it is, and
+the check follows it to the variable that actually carries the address. Without
+that, everything but the databases sat outside the mechanism.
 
 **This does not require a control-plane.** A declaration is only a statement of
 what the service reads; the values arrive as ordinary environment variables. Run
@@ -37,6 +43,7 @@ involved:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 class MissingRequirement(RuntimeError):
@@ -47,6 +54,28 @@ class MissingRequirement(RuntimeError):
     means the error surfaces far from its cause — usually as a timeout in
     somebody else's log.
     """
+
+
+#: How a dependency's address is written down.
+#:
+#: * ``host_port`` — separate ``HOST`` and ``PORT`` (a database, a cache)
+#: * ``endpoint``  — one ``ENDPOINT`` holding "host:port" (MinIO)
+#: * ``target``    — one ``TARGET`` holding "host:port" (a gRPC peer)
+#: * ``servers``   — one ``SERVERS`` holding a URL list (NATS)
+#:
+#: ``endpoint`` and ``target`` differ only in the variable they read. Both
+#: exist because the fleet already uses both spellings, and a mechanism that
+#: renamed live variables to suit itself would be a migration, not a
+#: declaration.
+AddressShape = Literal["host_port", "endpoint", "target", "servers"]
+
+#: The variable each shape reads its address from.
+_ADDRESS_KEYS: dict[str, str] = {
+    "host_port": "HOST",
+    "endpoint": "ENDPOINT",
+    "target": "TARGET",
+    "servers": "SERVERS",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +100,11 @@ class Need:
     capability: str
     prefix: str = ""
     optional: bool = False
+    #: How the address is written down. Not every dependency is a host/port
+    #: pair: NATS is given a list of URLs, MinIO and a gRPC peer are given one
+    #: "host:port" string. Declaring the shape is what lets those be checked at
+    #: startup like everything else, instead of being left out of the mechanism.
+    address: AddressShape = "host_port"
     #: Which of the provider's roles this wants: "" (primary) | "ro" | "<n>".
     #: Ignored standalone; meaningful once something resolves it.
     role: str = ""
@@ -95,7 +129,42 @@ class Need:
 
     @property
     def host_key(self) -> str:
-        return f"{self.env_prefix}HOST"
+        """The variable that must be set for this need to be configured.
+
+        Whichever one carries the address: ``HOST`` for a host/port pair,
+        ``ENDPOINT`` for a single "host:port", ``SERVERS`` for a URL list.
+        """
+        return f"{self.env_prefix}{_ADDRESS_KEYS[self.address]}"
+
+    @property
+    def address_keys(self) -> tuple[str, ...]:
+        """Every variable this need reads its address from, address first.
+
+        A host/port pair also reads a PORT; the other shapes carry the port
+        inside the one value, so there is nothing else to read.
+        """
+        if self.address == "host_port":
+            return (self.host_key, f"{self.env_prefix}PORT")
+        return (self.host_key,)
+
+
+#: Near-misses of this function's own keywords. A constraint by one of these
+#: names is far more likely a typo than a deliberate constraint.
+_KEYWORD_NAMES = frozenset(
+    {
+        "adress",
+        "adresses",
+        "addres",
+        "addresses",
+        "capabilities",
+        "capabilty",
+        "optionnal",
+        "optionl",
+        "prefixes",
+        "prefx",
+        "roles",
+    }
+)
 
 
 def needs(
@@ -104,15 +173,33 @@ def needs(
     prefix: str = "",
     optional: bool = False,
     role: str = "",
+    address: AddressShape = "host_port",
     **constraints: str,
 ) -> Need:
     """Declare a dependency. See the module docstring for what it does and does
-    not imply."""
+    not imply.
+
+    ``address`` says how the address is written down — ``"host_port"`` (the
+    default), ``"endpoint"`` for one "host:port" string, or ``"servers"`` for a
+    URL list. It changes which variable is checked, nothing else.
+    """
+    if address not in _ADDRESS_KEYS:
+        known = ", ".join(sorted(_ADDRESS_KEYS))
+        msg = f"unknown address shape {address!r}; expected one of: {known}"
+        raise ValueError(msg)
+    # `**constraints` is free-form on purpose, which makes it a trap: a typo in
+    # a real keyword (`adress=`, `optionnal=`) would land there silently and the
+    # need would be checked against the wrong variable. Reject the near-misses.
+    mistaken = sorted(constraints.keys() & _KEYWORD_NAMES)
+    if mistaken:
+        msg = f"misspelled keyword(s) passed as constraints: {', '.join(mistaken)}"
+        raise ValueError(msg)
     return Need(
         capability=capability,
         prefix=prefix,
         optional=optional,
         role=role,
+        address=address,
         constraints=dict(constraints),
     )
 
@@ -134,12 +221,12 @@ def check_configured(
     requires: list[Need],
     env: dict[str, str],
 ) -> list[Need]:
-    """Return the non-optional needs that have no host configured.
+    """Return the non-optional needs whose address is not configured.
 
-    Checks the HOST key only. A port usually has a sensible default and a
-    password may legitimately be empty, but an address cannot be guessed — if
-    nothing said where the dependency is, nothing else will make the connection
-    work.
+    Checks the address variable only — whichever one the need's shape uses. A
+    port usually has a sensible default and a password may legitimately be
+    empty, but an address cannot be guessed: if nothing said where the
+    dependency is, nothing else will make the connection work.
     """
     return [
         need
@@ -164,6 +251,7 @@ def require_configured(requires: list[Need], env: dict[str, str]) -> None:
 
 
 __all__ = [
+    "AddressShape",
     "MissingRequirement",
     "Need",
     "check_configured",

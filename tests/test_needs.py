@@ -160,3 +160,74 @@ def test_constraints_are_carried_without_being_interpreted() -> None:
     need = needs("postgres", version=">=16", tls="required")
 
     assert need.constraints == {"version": ">=16", "tls": "required"}
+
+# ── dependencies that are not a host/port pair ───────────────────────────────
+
+
+def test_a_url_list_is_checked_where_it_actually_lives() -> None:
+    """NATS is configured as NATS_SERVERS, a list of URLs. Checking for a HOST
+    that nothing sets would report every service as unconfigured."""
+    need = needs("nats", address="servers")
+
+    assert need.host_key == "NATS_SERVERS"
+    require_configured([need], {"NATS_SERVERS": "nats://nats:4222"})
+
+
+def test_a_single_endpoint_is_checked_as_one_value() -> None:
+    """MinIO takes "host:port" in one variable; there is no MINIO_HOST."""
+    need = needs("minio", address="endpoint")
+
+    assert need.host_key == "MINIO_ENDPOINT"
+    require_configured([need], {"MINIO_ENDPOINT": "minio:9000"})
+
+
+def test_a_grpc_peer_keeps_the_spelling_the_fleet_already_uses() -> None:
+    """The variable is AUTH_GRPC_TARGET. A mechanism that insisted on its own
+    name would be a migration of every service, not a declaration."""
+    need = needs("auth-service", prefix="AUTH_GRPC", address="target")
+
+    assert need.host_key == "AUTH_GRPC_TARGET"
+
+
+def test_an_unset_url_list_still_fails_at_startup() -> None:
+    """The point of declaring is the failure, so it must survive the shape."""
+    with pytest.raises(MissingRequirement) as exc:
+        require_configured([needs("nats", address="servers")], {})
+
+    assert "NATS_SERVERS" in str(exc.value)
+
+
+def test_a_host_port_pair_names_both_of_its_variables() -> None:
+    assert needs("postgres").address_keys == ("POSTGRES_HOST", "POSTGRES_PORT")
+
+
+def test_a_one_value_shape_has_nothing_else_to_read() -> None:
+    """The port lives inside the value, so there is no separate PORT."""
+    assert needs("minio", address="endpoint").address_keys == ("MINIO_ENDPOINT",)
+
+
+def test_the_default_shape_is_still_a_host_port_pair() -> None:
+    """Every existing declaration keeps working untouched."""
+    assert needs("postgres").address == "host_port"
+    assert needs("postgres").host_key == "POSTGRES_HOST"
+
+
+def test_an_unknown_address_shape_is_refused() -> None:
+    """Silently keeping an unrecognised shape would check the wrong variable,
+    and the need would read as configured when nothing is."""
+    with pytest.raises(ValueError, match="unknown address shape"):
+        needs("minio", address="endpont")  # type: ignore[arg-type]
+
+
+def test_a_misspelled_keyword_does_not_become_a_constraint() -> None:
+    """`**constraints` accepts anything, so a typo in a real keyword used to
+    land there and change nothing — the quietest possible failure."""
+    with pytest.raises(ValueError, match="misspelled keyword"):
+        needs("minio", adress="endpoint")
+
+
+def test_a_deliberate_constraint_still_passes_through() -> None:
+    """Rejecting near-misses must not close the door on real constraints."""
+    need = needs("postgres", version="16", tls="required")
+
+    assert need.constraints == {"version": "16", "tls": "required"}
