@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import hmac
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import grpc
 
 logger = logging.getLogger(__name__)
+
+#: Checks a token the shared secret did not match. Called with the RPC's method
+#: name and the presented token; returns a callable that wraps the handler when
+#: the caller is admitted (so the verifier can bind whatever it proved for the
+#: handler's duration), or ``None`` to leave the call refused.
+#:
+#: Async because deciding may need I/O — a per-host credential lives in a table,
+#: not in config.
+AlternateTokenVerifier = Callable[
+    [str, str],
+    Awaitable[Callable[[Any], Any] | None],
+]
 
 
 class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
@@ -20,7 +32,10 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
     """
 
     def __init__(
-        self, token: str, exempt_methods: Sequence[str] = (),
+        self,
+        token: str,
+        exempt_methods: Sequence[str] = (),
+        alternate_verifier: AlternateTokenVerifier | None = None,
     ) -> None:
         if not token:
             msg = "Internal token must not be empty."
@@ -32,6 +47,13 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         # token itself. Matched by suffix so the leading slash/package is
         # optional ("AgentGateway/Enroll" also matches).
         self._exempt_methods = tuple(exempt_methods)
+        # A second credential this service accepts on the same header, checked
+        # only after the shared token fails to match. Lets a service admit
+        # callers it authenticates its own way — the control-plane's per-host
+        # agent tokens — without every service having to know about them, and
+        # without weakening the default: no verifier means shared-token-only,
+        # exactly as before.
+        self._alternate_verifier = alternate_verifier
 
     async def intercept_service(
         self,
@@ -49,6 +71,10 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         received_token = metadata.get("x-internal-token")
 
         if not hmac.compare_digest(received_token or "", self._token):
+            if self._alternate_verifier is not None and received_token:
+                admitted = await self._alternate_verifier(method, received_token)
+                if admitted is not None:
+                    return admitted(await continuation(handler_call_details))
             logger.warning(
                 "gRPC auth failed for %s — invalid or missing internal token",
                 method,

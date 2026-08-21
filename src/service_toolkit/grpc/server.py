@@ -13,6 +13,8 @@ from grpc_reflection.v1alpha import reflection
 if TYPE_CHECKING:
     from auth_service_sdk import JWTVerifier
 
+    from .interceptors import AlternateTokenVerifier
+
 logger = logging.getLogger(__name__)
 
 _SERVER: grpc.aio.Server | None = None
@@ -100,6 +102,7 @@ def build_grpc_lifecycle(
     internal_token: str | None = None,
     internal_token_exempt_methods: Sequence[str] = (),
     require_internal_token: bool = True,
+    alternate_token_verifier: AlternateTokenVerifier | None = None,
     jwt_verifier: JWTVerifier[Any] | None = None,
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
@@ -130,6 +133,13 @@ def build_grpc_lifecycle(
     services that deliberately run token-less, such as local dev or services
     whose every RPC is JWT-authenticated.
 
+    *alternate_token_verifier* (optional) — a second credential this service
+    accepts on ``x-internal-token``, consulted only when the shared secret does
+    not match. It exists so a service can admit callers it authenticates its own
+    way (the control-plane's per-host agent tokens) without every service
+    learning about them, and without loosening anything by default: unset means
+    shared-token-only, exactly as before.
+
     Returns ``(startup, shutdown)`` async callables.
     """
 
@@ -156,6 +166,7 @@ def build_grpc_lifecycle(
                 InternalTokenInterceptor(
                     internal_token,
                     exempt_methods=internal_token_exempt_methods,
+                    alternate_verifier=alternate_token_verifier,
                 )
             )
 
