@@ -27,6 +27,10 @@ redis = [
     "msgspec-conf>=1.3.0",
 ]
 sqlalchemy = ["sqlalchemy~=2.0"]
+# IP -> place, for services that choose by nearness (nearest enrolment point)
+# or display it (where a session was opened). The mmdb itself is fetched at
+# runtime, not shipped: it is ~66MB and refreshed weekly.
+geo = ["geoip2>=4.8.0,<6.0.0"]
 errors = ["awesome-errors @ git+https://github.com/THEROER/awesome-errors"]
 grpc = [
     "awesome-errors @ git+https://github.com/THEROER/awesome-errors",
