@@ -103,7 +103,12 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        # Pinned to a release rather than to `v5`. On 2026-08-31 the revision
+        # that floating tag pointed at stopped downloading — codeload answered
+        # 400 for it while every tagged release still fetched — and every build
+        # in the fleet failed at "Set up job" with nothing of ours in the log.
+        # A moving tag is also a thing someone else can re-point at will.
+        uses: docker/metadata-action@v5.9.0
         with:
           images: |
             ${{ steps.image.outputs.name }}
