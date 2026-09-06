@@ -73,6 +73,10 @@ dev = [
     "mypy>=1.18.2,<2",
     "grpcio>=1.71.0,<2",
     "grpcio-tools>=1.71.0,<2",
+    # Test-only: the TLS tests mint a CA and a pair of certificates so the
+    # handshake they assert on is a real one. Not a runtime dependency — the
+    # server takes PEM bytes and never parses them.
+    "cryptography>=43,<46",
     "grpcio-health-checking>=1.71.0,<2",
     "grpcio-reflection>=1.71.0,<2",
     "protobuf>=5.29.0,<6",

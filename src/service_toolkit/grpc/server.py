@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
@@ -20,16 +20,81 @@ logger = logging.getLogger(__name__)
 _SERVER: grpc.aio.Server | None = None
 
 
+class ServerTls(NamedTuple):
+    """What a service needs to serve gRPC over TLS, and to demand it back.
+
+    Optional everywhere it is accepted: a service that passes nothing keeps the
+    plaintext port it had. That is deliberate rather than lenient — these ports
+    sit on private networks and several services have no certificate to serve,
+    so a toolkit that refused to start without one would be a toolkit nobody
+    could upgrade to.
+
+    ``client_ca`` is the half that turns TLS into mTLS. With it the server
+    demands a certificate signed by that CA and refuses a caller without one, so
+    the peer is authenticated by something it holds rather than by something it
+    says. A bearer token in a header proves whoever sent it read the token; a
+    client certificate proves the sender holds a private key, and that key never
+    travels.
+
+    Certificates as PEM bytes rather than paths: a caller may hold them in a
+    secret store, an env var, or a file, and a helper that only accepted paths
+    would force the first two to write them to disk to be usable.
+    """
+
+    #: The server's own certificate chain, PEM.
+    certificate: bytes
+    #: Its private key, PEM.
+    private_key: bytes
+    #: CA that client certificates must be signed by. None serves TLS without
+    #: asking the caller for one.
+    client_ca: bytes | None = None
+
+
+def peer_certificate_pem(context: object) -> str:
+    """The verified client certificate of the caller, or "".
+
+    Only meaningful when the server demanded one: the value comes from gRPC's
+    auth context, which is populated after the handshake has already checked the
+    chain against the configured CA. So a servicer reading this is reading an
+    identity that has been proven, not one that has been claimed — which is the
+    distinction that makes it worth more than a header.
+
+    Empty for a plaintext port, or for a TLS port serving without client auth.
+    A caller has to treat that as "unknown", never as "trusted".
+    """
+    auth = getattr(context, "auth_context", None)
+    if auth is None:
+        return ""
+    try:
+        identities = auth().get("x509_pem_cert") or ()
+    except Exception:
+        # Reported, not swallowed: a context that cannot answer is either a
+        # double in a test or a gRPC version whose auth context has moved, and
+        # the second is worth knowing about — every caller of this would
+        # silently read "no certificate" and treat the peer as unknown.
+        logger.warning("could not read the peer certificate from the call context")
+        return ""
+    if not identities:
+        return ""
+    first = identities[0]
+    return first.decode() if isinstance(first, bytes) else str(first)
+
+
 def create_grpc_server(
     *,
     port: int = 50051,
     interceptors: Sequence[grpc.aio.ServerInterceptor] = (),
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
+    tls: ServerTls | None = None,
 ) -> grpc.aio.Server:
     """Create a gRPC async server (not yet started).
 
     Returns the server so callers can register servicers before starting.
+
+    *tls* serves the port over TLS, and demands a client certificate when it
+    carries a ``client_ca``. None keeps the plaintext port, which is what every
+    caller had before this existed.
     """
     global _SERVER  # noqa: PLW0603
 
@@ -40,7 +105,21 @@ def create_grpc_server(
             ("grpc.max_send_message_length", 16 * 1024 * 1024),
         ],
     )
-    server.add_insecure_port(f"[::]:{port}")
+    if tls is None:
+        server.add_insecure_port(f"[::]:{port}")
+    else:
+        server.add_secure_port(
+            f"[::]:{port}",
+            grpc.ssl_server_credentials(
+                [(tls.private_key, tls.certificate)],
+                root_certificates=tls.client_ca,
+                # Demanded, not merely accepted. Optional client auth means a
+                # caller without a certificate still gets through, so every
+                # servicer would have to check for one and the guarantee would
+                # be whatever the least careful of them does.
+                require_client_auth=tls.client_ca is not None,
+            ),
+        )
 
     # Health check
     health_servicer = health.HealthServicer()
@@ -107,6 +186,7 @@ def build_grpc_lifecycle(
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
     registrars: Sequence[ServiceRegistrar] = (),
+    tls: ServerTls | None = None,
 ) -> tuple[Callable[[], object], Callable[[], object]]:
     """Build startup/shutdown callables for Litestar ``on_startup``/``on_shutdown``.
 
@@ -187,6 +267,7 @@ def build_grpc_lifecycle(
             interceptors=interceptors,
             reflection_enabled=reflection_enabled,
             service_names=service_names,
+            tls=tls,
         )
 
         for registrar in registrars:
