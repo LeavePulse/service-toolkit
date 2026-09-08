@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from litestar.types import ControllerRouterHandler, ExceptionHandlersMap
 
     from .jwt_integration import JWTAuthIntegration
+    from ..settings import TracingSettings
 
     LifeSpanHandler: TypeAlias = Callable[..., object]
 
@@ -112,6 +113,7 @@ def create_service_app(
     # SQLAlchemy (optional)
     sqlalchemy_config: SQLAlchemyAsyncConfig | None = None,
     # Tracing
+    tracing_settings: TracingSettings | None = None,
     instrument_redis: bool = True,
     instrument_sqlalchemy: bool = True,
     # Prometheus
@@ -171,6 +173,7 @@ def create_service_app(
 
     otel_middleware = setup_tracing(
         service_name=service_name,
+        settings=tracing_settings,
         instrument_redis=instrument_redis,
         instrument_sqlalchemy=instrument_sqlalchemy,
     )
