@@ -119,6 +119,50 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ping_interval == pytest.approx(30.0)
 
 
+def test_tls_settings_build_a_verified_connection_context() -> None:
+    settings = NATSSettings(
+        servers=("tls://nats.internal:4222",),
+        require_tls=True,
+        tls_server_name="nats.internal",
+    )
+
+    options = settings.connection_options()
+
+    assert options["tls"].check_hostname
+    assert options["tls"].verify_mode.name == "CERT_REQUIRED"
+    assert options["tls_hostname"] == "nats.internal"
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        (
+            NATSSettings(servers=("nats://nats:4222",), require_tls=True),
+            "requires every server",
+        ),
+        (
+            NATSSettings(
+                servers=("tls://nats:4222",), require_mtls=True
+            ),
+            "requires NATS_REQUIRE_TLS",
+        ),
+        (
+            NATSSettings(
+                servers=("tls://nats:4222",),
+                require_tls=True,
+                require_mtls=True,
+            ),
+            "requires a client certificate",
+        ),
+    ],
+)
+def test_tls_settings_fail_closed_when_policy_is_incomplete(
+    settings: NATSSettings, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        settings.connection_options()
+
+
 def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeBaseSettings:
         def __init__(self, **values) -> None:

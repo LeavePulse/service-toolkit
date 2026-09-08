@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import ssl
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
@@ -79,6 +80,17 @@ def _parse_float(value: str | None, default: float) -> float:
         raise ValueError(f"Invalid float value: {value!r}") from exc
 
 
+def _parse_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
+
+
 @dataclass(slots=True)
 class NATSSettings:
     """Configuration parameters for NATS connectivity."""
@@ -95,6 +107,12 @@ class NATSSettings:
     drain_timeout: float = DEFAULT_NATS_DRAIN_TIMEOUT
     request_timeout: float = DEFAULT_NATS_REQUEST_TIMEOUT
     jetstream_domain: str | None = None
+    require_tls: bool = False
+    require_mtls: bool = False
+    tls_ca_file: str | None = None
+    tls_cert_file: str | None = None
+    tls_key_file: str | None = None
+    tls_server_name: str | None = None
 
     @classmethod
     def from_env(
@@ -135,6 +153,12 @@ class NATSSettings:
                 drain_timeout: float = DEFAULT_NATS_DRAIN_TIMEOUT
                 request_timeout: float = DEFAULT_NATS_REQUEST_TIMEOUT
                 jetstream_domain: str | None = None
+                require_tls: bool = False
+                require_mtls: bool = False
+                tls_ca_file: str | None = None
+                tls_cert_file: str | None = None
+                tls_key_file: str | None = None
+                tls_server_name: str | None = None
 
             loaded = _NATSConfig.load(
                 env=env,
@@ -156,6 +180,12 @@ class NATSSettings:
                 drain_timeout=loaded.drain_timeout,
                 request_timeout=loaded.request_timeout,
                 jetstream_domain=loaded.jetstream_domain,
+                require_tls=loaded.require_tls,
+                require_mtls=loaded.require_mtls,
+                tls_ca_file=loaded.tls_ca_file,
+                tls_cert_file=loaded.tls_cert_file,
+                tls_key_file=loaded.tls_key_file,
+                tls_server_name=loaded.tls_server_name,
             )
 
         source = env if env is not None else os.environ
@@ -189,6 +219,12 @@ class NATSSettings:
             DEFAULT_NATS_REQUEST_TIMEOUT,
         )
         jetstream_domain = source.get(f"{prefix}JETSTREAM_DOMAIN")
+        require_tls = _parse_bool(source.get(f"{prefix}REQUIRE_TLS"), False)
+        require_mtls = _parse_bool(source.get(f"{prefix}REQUIRE_MTLS"), False)
+        tls_ca_file = source.get(f"{prefix}TLS_CA_FILE")
+        tls_cert_file = source.get(f"{prefix}TLS_CERT_FILE")
+        tls_key_file = source.get(f"{prefix}TLS_KEY_FILE")
+        tls_server_name = source.get(f"{prefix}TLS_SERVER_NAME")
 
         return cls(
             servers=servers,
@@ -203,11 +239,17 @@ class NATSSettings:
             drain_timeout=drain_timeout,
             request_timeout=request_timeout,
             jetstream_domain=jetstream_domain,
+            require_tls=require_tls,
+            require_mtls=require_mtls,
+            tls_ca_file=tls_ca_file,
+            tls_cert_file=tls_cert_file,
+            tls_key_file=tls_key_file,
+            tls_server_name=tls_server_name,
         )
 
     def connection_options(self) -> dict[str, Any]:
         """Return options suitable for :func:`nats.connect`."""
-
+        tls = self._tls_context()
         options: dict[str, Any] = {
             "servers": list(self.servers),
             "max_reconnect_attempts": self.max_reconnect_attempts,
@@ -215,6 +257,10 @@ class NATSSettings:
             "ping_interval": self.ping_interval,
             "connect_timeout": self.connect_timeout,
         }
+        if tls is not None:
+            options["tls"] = tls
+            if self.tls_server_name:
+                options["tls_hostname"] = self.tls_server_name
         if self.name:
             options["name"] = self.name
         if self.user and self.password:
@@ -223,6 +269,33 @@ class NATSSettings:
         if self.token:
             options["token"] = self.token
         return options
+
+    def _tls_context(self) -> ssl.SSLContext | None:
+        """Build verified TLS or fail before a protected connection is opened."""
+        uses_tls = all(server.startswith("tls://") for server in self.servers)
+        has_client_certificate = bool(self.tls_cert_file or self.tls_key_file)
+        if self.require_tls and not uses_tls:
+            raise ValueError("NATS_REQUIRE_TLS requires every server to use tls://")
+        if self.require_mtls and not self.require_tls:
+            raise ValueError("NATS_REQUIRE_MTLS requires NATS_REQUIRE_TLS")
+        if has_client_certificate and not (self.tls_cert_file and self.tls_key_file):
+            raise ValueError("NATS TLS client certificate and key must be configured together")
+        if self.require_mtls and not has_client_certificate:
+            raise ValueError("NATS_REQUIRE_MTLS requires a client certificate and key")
+        if not (uses_tls or self.require_tls or has_client_certificate or self.tls_ca_file):
+            return None
+        if not uses_tls:
+            raise ValueError("NATS TLS settings require every server to use tls://")
+        context = ssl.create_default_context(
+            purpose=ssl.Purpose.SERVER_AUTH,
+            cafile=self.tls_ca_file,
+        )
+        if has_client_certificate:
+            certificate, key = self.tls_cert_file, self.tls_key_file
+            if certificate is None or key is None:
+                raise ValueError("NATS TLS client certificate and key must be configured together")
+            context.load_cert_chain(certificate, key)
+        return context
 
 
 class NATSClient:
