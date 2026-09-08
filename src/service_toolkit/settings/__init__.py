@@ -12,6 +12,7 @@ __all__ = [
     "MissingRequirement",
     "Need",
     "RedisCoordinationSettings",
+    "TracingSettings",
     "check_configured",
     "needs",
     "prefixes_for",
@@ -23,6 +24,7 @@ _EXPORT_MODULES = {
     "GrpcSettings": ".config",
     "InternalSettings": ".config",
     "RedisCoordinationSettings": ".config",
+    "TracingSettings": ".config",
     # `needs` depends on nothing optional — a service can declare what it needs
     # without the env extra installed, and without a control-plane to answer.
     "MissingRequirement": ".needs",

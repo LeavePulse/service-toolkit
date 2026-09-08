@@ -1,14 +1,13 @@
 """OpenTelemetry tracing bootstrap helpers."""
-# noqa: archlint=env-access — reads standard ``OTEL_*`` env vars defined by the
-# OpenTelemetry spec; these are owned by the runtime, not service settings.
 
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
+
+from service_toolkit.settings import TracingSettings
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +24,6 @@ _configured_service_name: str | None = None
 _httpx_instrumented = False
 _sqlalchemy_instrumented = False
 _redis_instrumented = False
-
-
-def _env_bool(name: str, *, default: bool = False) -> bool:
-    raw = str(os.getenv(name, "")).strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, *, default: float) -> float:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
 
 
 def _parse_otel_headers(raw: str | None) -> Mapping[str, str]:
@@ -73,6 +55,7 @@ def _parse_resource_attributes(raw: str | None) -> dict[str, str]:
 def setup_tracing(
     *,
     service_name: str,
+    settings: TracingSettings | None = None,
     enabled: bool | None = None,
     instrument_httpx: bool | None = None,
     instrument_sqlalchemy: bool | None = None,
@@ -80,50 +63,37 @@ def setup_tracing(
 ) -> MiddlewareFactory | None:
     """Configure global OpenTelemetry provider and return ASGI middleware class.
 
-    Environment:
-    - `OTEL_ENABLED` (bool, default: `false`)
-    - `OTEL_EXPORTER_OTLP_ENDPOINT` (default: `http://tempo:4317`)
-    - `OTEL_EXPORTER_OTLP_HEADERS` (comma-separated `k=v`)
-    - `OTEL_EXPORTER_OTLP_INSECURE` (bool, default: inferred from endpoint scheme)
-    - `OTEL_TRACES_SAMPLER_ARG` (float, default: `1.0`)
-    - `OTEL_RESOURCE_ATTRIBUTES` (comma-separated `k=v`)
-    - `OTEL_INSTRUMENT_HTTPX` (bool, default: `true`)
-    - `OTEL_INSTRUMENT_SQLALCHEMY` (bool, default: `true`)
-    - `OTEL_INSTRUMENT_REDIS` (bool, default: `true`)
+    ``settings`` is the typed observability policy. Omitting it loads the
+    standard ``OTEL_*`` spelling through :class:`TracingSettings`, preserving
+    compatibility while keeping environment parsing out of tracing logic.
     """
 
-    enabled_value = (
-        _env_bool("OTEL_ENABLED", default=False) if enabled is None else bool(enabled)
-    )
+    tracing = settings or TracingSettings.load(prefix="OTEL_")
+    enabled_value = tracing.enabled if enabled is None else bool(enabled)
     if not enabled_value:
         return None
 
-    endpoint = (
-        str(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")).strip() or "http://tempo:4317"
-    )
-    headers = _parse_otel_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS"))
-    sample_ratio = max(
-        0.0, min(1.0, _env_float("OTEL_TRACES_SAMPLER_ARG", default=1.0))
-    )
+    endpoint = tracing.exporter_otlp_endpoint.strip() or "http://tempo:4317"
+    headers = _parse_otel_headers(tracing.exporter_otlp_headers)
+    sample_ratio = max(0.0, min(1.0, tracing.traces_sampler_arg))
 
-    insecure_env = os.getenv("OTEL_EXPORTER_OTLP_INSECURE")
-    if insecure_env is None:
+    if tracing.exporter_otlp_insecure is None:
         insecure = endpoint.startswith("http://")
     else:
-        insecure = _env_bool("OTEL_EXPORTER_OTLP_INSECURE", default=False)
+        insecure = tracing.exporter_otlp_insecure
 
     httpx_enabled = (
-        _env_bool("OTEL_INSTRUMENT_HTTPX", default=True)
+        tracing.instrument_httpx
         if instrument_httpx is None
         else bool(instrument_httpx)
     )
     sqlalchemy_enabled = (
-        _env_bool("OTEL_INSTRUMENT_SQLALCHEMY", default=True)
+        tracing.instrument_sqlalchemy
         if instrument_sqlalchemy is None
         else bool(instrument_sqlalchemy)
     )
     redis_enabled = (
-        _env_bool("OTEL_INSTRUMENT_REDIS", default=True)
+        tracing.instrument_redis
         if instrument_redis is None
         else bool(instrument_redis)
     )
@@ -154,9 +124,7 @@ def setup_tracing(
 
     with _configure_lock:
         if not _configured:
-            resource_attributes = _parse_resource_attributes(
-                os.getenv("OTEL_RESOURCE_ATTRIBUTES")
-            )
+            resource_attributes = _parse_resource_attributes(tracing.resource_attributes)
             resource_attributes.setdefault(SERVICE_NAME, service_name)
             resource = Resource.create(resource_attributes)
             provider = TracerProvider(

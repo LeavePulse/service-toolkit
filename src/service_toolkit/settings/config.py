@@ -83,9 +83,30 @@ class GrpcSettings(BaseSettings):
     reflection_enabled: bool = True
 
 
+class TracingSettings(BaseSettings):
+    """OpenTelemetry trace-export policy.
+
+    Load this class with the ``OTEL_`` prefix. Field names deliberately retain
+    the standard OpenTelemetry suffixes, so the typed source remains compatible
+    with ``OTEL_EXPORTER_OTLP_*`` and friends rather than inventing a parallel
+    configuration vocabulary.
+    """
+
+    enabled: bool = False
+    exporter_otlp_endpoint: str = "http://tempo:4317"
+    exporter_otlp_headers: str = ""
+    exporter_otlp_insecure: bool | None = None
+    traces_sampler_arg: float = 1.0
+    resource_attributes: str = ""
+    instrument_httpx: bool = True
+    instrument_sqlalchemy: bool = True
+    instrument_redis: bool = True
+
+
 __all__ = [
     "DatabaseSettings",
     "GrpcSettings",
     "InternalSettings",
     "RedisCoordinationSettings",
+    "TracingSettings",
 ]
