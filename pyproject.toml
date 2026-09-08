@@ -26,7 +26,10 @@ redis = [
     "msgspec>=0.21.0,<0.22",
     "msgspec-conf>=1.3.0",
 ]
-sqlalchemy = ["sqlalchemy~=2.0"]
+# This extra exports ``service_toolkit.db.litestar``.  Keep its Litestar
+# integration dependency here so an importing service receives the complete
+# public module instead of discovering a missing transitive package at startup.
+sqlalchemy = ["sqlalchemy~=2.0", "advanced-alchemy>=1.7.0,<2"]
 # IP -> place, for services that choose by nearness (nearest enrolment point)
 # or display it (where a session was opened). The mmdb itself is fetched at
 # runtime, not shipped: it is ~66MB and refreshed weekly.
@@ -63,6 +66,7 @@ dev = [
     "nats-py>=2.14.0,<3",
     "watchfiles>=1.0.0,<2",
     "sqlalchemy~=2.0",
+    "advanced-alchemy>=1.7.0,<2",
     "httpx>=0.28.1,<1.0.0",
     "msgspec>=0.21.0,<0.22",
     "awesome-errors @ git+https://github.com/THEROER/awesome-errors",
