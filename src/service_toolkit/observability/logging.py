@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from contextvars import ContextVar, Token
-from logging import Filter, LogRecord
+from datetime import UTC, datetime
+from logging import Filter, Formatter, LogRecord
+from typing import Literal
 from uuid import uuid4
 
 from litestar.logging import LoggingConfig
@@ -56,7 +59,7 @@ def _extract_trace_id(scope: Scope) -> str | None:
     return _extract_header(scope, "x-trace-id")
 
 
-def _current_otel_trace_id() -> str | None:
+def _current_otel_trace_context() -> tuple[str, str] | None:
     try:
         from opentelemetry import trace  # type: ignore[import-not-found]
     except ModuleNotFoundError:
@@ -68,7 +71,10 @@ def _current_otel_trace_id() -> str | None:
     span_context = span.get_span_context()
     if span_context is None or not span_context.is_valid:
         return None
-    return f"{int(span_context.trace_id):032x}"
+    return (
+        f"{int(span_context.trace_id):032x}",
+        f"{int(span_context.span_id):016x}",
+    )
 
 
 def bind_log_user_id(user_id: object | None) -> None:
@@ -79,11 +85,15 @@ def bind_log_user_id(user_id: object | None) -> None:
 def get_log_context() -> dict[str, str]:
     """Return currently active logging context values."""
     trace_id = _TRACE_ID_VAR.get()
+    span_id = "-"
     if trace_id == "-":
-        trace_id = _current_otel_trace_id() or trace_id
+        otel_context = _current_otel_trace_context()
+        if otel_context is not None:
+            trace_id, span_id = otel_context
     return {
         "request_id": _REQUEST_ID_VAR.get(),
         "trace_id": trace_id,
+        "span_id": span_id,
         "user_id": _USER_ID_VAR.get(),
     }
 
@@ -151,6 +161,25 @@ def request_context_middleware(app: ASGIApp) -> ASGIApp:
     return RequestContextLoggingMiddleware(app)
 
 
+class JsonLogFormatter(Formatter):
+    """Emit a stable machine-readable record for collectors and trace links."""
+
+    def format(self, record: LogRecord) -> str:
+        payload: dict[str, str] = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
+            "severity": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "request_id": str(getattr(record, "request_id", "-")),
+            "trace_id": str(getattr(record, "trace_id", "-")),
+            "span_id": str(getattr(record, "span_id", "-")),
+            "user_id": str(getattr(record, "user_id", "-")),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 def _merge_patterns(
     suppressed_paths: Sequence[str] | None,
     include_default: bool,
@@ -167,6 +196,7 @@ def build_standard_logging_config(
     *,
     suppressed_paths: Sequence[str] | None = None,
     include_default_suppressed: bool = True,
+    log_format: Literal["text", "json"] = "text",
 ) -> LoggingConfig:
     """Return a reusable logging configuration.
 
@@ -174,8 +204,16 @@ def build_standard_logging_config(
         suppressed_paths: Additional path fragments to filter from the access log.
             Pass an empty tuple to disable all suppression.
         include_default_suppressed: Include built-in `/health` and `/metrics` filters.
+        log_format: `text` preserves legacy console output; `json` emits stable
+            OTel-compatible correlation fields for a log collector. Pass this
+            from the service's typed settings rather than reading process env
+            inside a formatter.
     """
 
+    selected_format = log_format.lower()
+    if selected_format not in {"text", "json"}:
+        msg = "log_format must be text or json"
+        raise ValueError(msg)
     patterns = _merge_patterns(suppressed_paths, include_default_suppressed)
 
     class ContextFilter(Filter):
@@ -183,6 +221,7 @@ def build_standard_logging_config(
             context = get_log_context()
             record.request_id = context["request_id"]
             record.trace_id = context["trace_id"]
+            record.span_id = context["span_id"]
             record.user_id = context["user_id"]
             return True
 
@@ -193,14 +232,20 @@ def build_standard_logging_config(
             message = record.getMessage()
             return not any(pattern in message for pattern in self.active_patterns)
 
+    formatter: dict[str, object]
+    if selected_format == "json":
+        formatter = {"()": JsonLogFormatter}
+    else:
+        formatter = {
+            "format": (
+                "%(levelname)s [req=%(request_id)s trace=%(trace_id)s "
+                "user=%(user_id)s] %(message)s"
+            )
+        }
+
     return LoggingConfig(
         formatters={
-            "standard": {
-                "format": (
-                    "%(levelname)s [req=%(request_id)s trace=%(trace_id)s "
-                    "user=%(user_id)s] %(message)s"
-                )
-            },
+            "standard": formatter,
         },
         handlers={
             "console": {
@@ -230,6 +275,7 @@ def build_standard_logging_config(
 
 __all__ = [
     "RequestContextLoggingMiddleware",
+    "JsonLogFormatter",
     "request_context_middleware",
     "bind_log_user_id",
     "build_standard_logging_config",

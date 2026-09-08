@@ -7,6 +7,7 @@ import sys
 
 __all__ = [
     "RequestContextLoggingMiddleware",
+    "JsonLogFormatter",
     "ThrottledGaugeRefresh",
     "bind_log_user_id",
     "build_prometheus_instrumentation",
@@ -25,6 +26,7 @@ __all__ = [
 
 _EXPORT_MODULES = {
     "RequestContextLoggingMiddleware": ".logging",
+    "JsonLogFormatter": ".logging",
     "ThrottledGaugeRefresh": ".metrics",
     "bind_log_user_id": ".logging",
     "build_prometheus_instrumentation": ".prometheus",
