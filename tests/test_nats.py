@@ -163,7 +163,7 @@ def test_tls_settings_fail_closed_when_policy_is_incomplete(
         settings.connection_options()
 
 
-def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_from_env_with_msgspec_conf(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeBaseSettings:
         def __init__(self, **values) -> None:
             for key, value in values.items():
@@ -206,14 +206,14 @@ def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
                     data.setdefault(key.lower(), value)
             return cls(**data)
 
-    fake_module = types.ModuleType("env_settings")
+    fake_module = types.ModuleType("msgspec_conf")
     fake_module_any = cast("Any", fake_module)
     fake_module_any.BaseSettings = FakeBaseSettings
     fake_module_any.load_settings = lambda *args, **kwargs: FakeBaseSettings.load(
         *args, **kwargs
     )
 
-    monkeypatch.setitem(sys.modules, "env_settings", fake_module)
+    monkeypatch.setitem(sys.modules, "msgspec_conf", fake_module)
     import service_toolkit.messaging.nats as nats_module
 
     importlib.reload(nats_module)
@@ -229,7 +229,7 @@ def test_from_env_with_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.max_reconnect_attempts == 7
     assert settings.reconnect_time_wait == pytest.approx(3.5)
 
-    monkeypatch.delitem(sys.modules, "env_settings", raising=False)
+    monkeypatch.delitem(sys.modules, "msgspec_conf", raising=False)
     importlib.reload(nats_module)
 
 
