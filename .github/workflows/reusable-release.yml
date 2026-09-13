@@ -108,10 +108,25 @@ jobs:
       - name: Set up MinIO client
         if: inputs.update_service_url != '' && inputs.minio_endpoint != ''
         shell: bash
+        env:
+          # A PINNED release from the GitHub repo, not `latest` from dl.min.io.
+          #
+          # That host answers 410 for every path now: MinIO archived the
+          # open-source server, `mc` and KES and stopped serving them. This is a
+          # REUSABLE workflow, so the outage was every publishing repo at once,
+          # and it failed installing a tool rather than on anything built here.
+          #
+          # Pinned rather than newest-tag, which the old URL effectively was: a
+          # release should produce the same artifacts tomorrow, and an upload
+          # tool that moves under it is one more thing that changes with no
+          # commit to point at.
+          MC_RELEASE: RELEASE.2025-08-13T08-35-41Z
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$HOME/.local/bin/mc"
+          curl -fsSL \
+            "https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}" \
+            -o "$HOME/.local/bin/mc"
           chmod +x "$HOME/.local/bin/mc"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
