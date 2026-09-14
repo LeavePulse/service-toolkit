@@ -31,6 +31,54 @@ from litestar.types import (
 )
 
 
+#: The caching policy a tagged response carries when its handler names none.
+#:
+#: Stamping a validator without a policy is the half-answer that caused this to
+#: be written: a response with an ``ETag`` and no ``Cache-Control`` is one a
+#: cache MAY store on a heuristic (RFC 9111 §4.2.2), and every cache that does
+#: starts keeping a validator of its own. A client whose SDK also keeps one then
+#: has two, and the client's own store can be handed a ``304`` for a body it
+#: never held — a resource that exists, read as absent.
+#:
+#: ``private`` because every response on these services is answered for ONE
+#: bearer: an operator's graph is not an intermediary's to hold, and the panel's
+#: same-origin proxy is exactly such an intermediary. ``no-cache`` rather than
+#: ``no-store`` because the validator is still worth having — ``no-cache``
+#: permits storing and requires revalidating, which is what an ETag is FOR.
+#: ``no-store`` is reserved for the opt-out above, where it already means
+#: something else: do not tag this at all.
+#:
+#: A default, not an override: a handler that states its own policy keeps it.
+_DEFAULT_CACHE_CONTROL = b"private, no-cache"
+
+#: Header fields a ``304`` repeats from the ``200`` it stands in for.
+#:
+#: RFC 9110 §15.4.5 names exactly these: a cache updates its stored response
+#: from a ``304``, so a field that would have differed on the ``200`` has to
+#: travel with it or the stored copy keeps a stale one. ``Cache-Control`` is the
+#: one that bites hardest by its ABSENCE — a response with no caching policy
+#: invites a heuristic (RFC 9111 §4.2.2), and a client that ends up with its own
+#: validator alongside the one its SDK keeps has two caches answering for one
+#: URL.
+#:
+#: A table rather than a condition per field, because "which fields survive a
+#: 304" is one decision and the failure from getting it wrong is silent: the
+#: response is well-formed either way, and what breaks is a cache two hops away.
+#:
+#: Deliberately NOT a pass-through of everything: ``Content-Length`` and
+#: ``Content-Type`` describe a body that a 304 does not carry, and repeating
+#: them has clients waiting for bytes that never come.
+_CARRIED_ON_304: frozenset[bytes] = frozenset(
+    {
+        b"cache-control",
+        b"content-location",
+        b"date",
+        b"expires",
+        b"vary",
+    }
+)
+
+
 def _header(headers: Iterable[tuple[bytes, bytes]], name: bytes) -> bytes | None:
     lowered = name.lower()
     for key, value in headers:
@@ -123,21 +171,46 @@ class ETagMiddleware:
             # nothing meaningful to tag — emit what we have unchanged.
             if start_message is not None:
                 await send(start_message)
-            await send(
-                {"type": "http.response.body", "body": body, "more_body": False}
-            )
+            await send({"type": "http.response.body", "body": body, "more_body": False})
             return
 
         etag_bytes = _compute_etag(body).encode("latin-1")
 
+        # The policy is settled BEFORE the two paths diverge, so both carry it.
+        #
+        # Stamped only on the 200 it reached a client exactly once: a 304 repeats
+        # the fields the response already had, and a default added after the
+        # branch is not one of them. Measured on the live fleet — the 200 came
+        # back `private, no-cache` and the 304 to the same URL carried `date` and
+        # `etag` alone, which is the "no policy at all" a heuristic cache acts on.
+        # The second response is the one that reaches a cache MOST often.
+        headers = list(start_message["headers"])
+        if _header(headers, b"cache-control") is None:
+            headers.append((b"cache-control", _DEFAULT_CACHE_CONTROL))
+        start_message["headers"] = headers
+
         if if_none_match is not None and _etag_matches(if_none_match, etag_bytes):
             # Client's copy is current → 304 with no body, ETag echoed back.
+            #
+            # The other headers are CARRIED, not dropped. RFC 9110 §15.4.5 requires
+            # a 304 to repeat the fields a 200 to the same request would have sent
+            # — Cache-Control, Vary, Date, Content-Location, Expires — because a
+            # cache validates its stored response against them. A 304 stripped to
+            # a bare ETag tells every cache on the path that the response has no
+            # caching policy at all, and the ones that then apply a heuristic
+            # (RFC 9111 §4.2.2) become a second cache holding a second validator
+            # for the same URL. Two caches, two validators, and the client's own
+            # store can be handed a 304 for a body it does not have.
+            carried = [
+                (key, value)
+                for key, value in start_message["headers"]
+                if key.lower() in _CARRIED_ON_304
+            ]
+            carried.append((b"etag", etag_bytes))
             start_message["status"] = 304
-            start_message["headers"] = [(b"etag", etag_bytes)]
+            start_message["headers"] = carried
             await send(start_message)
-            await send(
-                {"type": "http.response.body", "body": b"", "more_body": False}
-            )
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
             return
 
         headers = list(start_message["headers"])
