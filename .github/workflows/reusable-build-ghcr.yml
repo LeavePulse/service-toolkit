@@ -28,6 +28,14 @@ on:
         required: false
         type: string
         default: '["self-hosted","Linux","X64","ci-heavy"]'
+      generate_grpc:
+        description: >-
+          Run `lp-generate-grpc` before the image build, for a service whose
+          generated gRPC code is not committed (for example because it is
+          generated from a pinned contract in another repository).
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -68,6 +76,28 @@ jobs:
             echo "Dockerfile does not exist: $dockerfile_path" >&2
             exit 1
           fi
+
+      # Generated here, not inside the image: a pinned contract may live in a
+      # private repository, and the checkout already holds the token that reads
+      # it, so the Docker build gets the generated code in its context and no
+      # credential for the contract. `--frozen` takes the resolver and protoc
+      # from the service's own lock: the resolver is pinned by that lock, and
+      # generated code has to match the protobuf runtime the image installs
+      # from it.
+      - name: Set up uv
+        if: inputs.generate_grpc
+        uses: astral-sh/setup-uv@v6
+
+      - name: Generate gRPC code
+        if: inputs.generate_grpc
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          uv run --frozen lp-sync-contract
+          uv run --frozen lp-generate-grpc
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
