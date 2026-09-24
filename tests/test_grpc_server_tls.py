@@ -14,6 +14,7 @@ refused, and only a connection can answer it.
 from __future__ import annotations
 
 import datetime as dt
+import socket
 
 import grpc
 import pytest
@@ -83,6 +84,17 @@ def pki() -> dict:
     }
 
 
+def _free_port() -> int:
+    """A port nothing holds right now, from the kernel.
+
+    Fixed numbers collided with whatever else was listening, or with a server
+    from a previous run not yet released, and failed the bind at random.
+    """
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+        probe.bind(("::", 0))
+        return int(probe.getsockname()[1])
+
+
 async def _serve(port: int, tls: ServerTls | None) -> grpc.aio.Server:
     server = create_grpc_server(port=port, tls=tls, reflection_enabled=False)
     await server.start()
@@ -104,8 +116,9 @@ async def _health(channel: grpc.aio.Channel) -> bool:
 
 @pytest.mark.asyncio
 async def test_a_client_with_a_signed_certificate_is_admitted(pki: dict) -> None:
+    port = _free_port()
     server = await _serve(
-        50231,
+        port,
         ServerTls(
             certificate=pki["server"][0],
             private_key=pki["server"][1],
@@ -118,7 +131,7 @@ async def test_a_client_with_a_signed_certificate_is_admitted(pki: dict) -> None
             private_key=pki["client"][1],
             certificate_chain=pki["client"][0],
         )
-        async with grpc.aio.secure_channel("localhost:50231", credentials) as channel:
+        async with grpc.aio.secure_channel(f"localhost:{port}", credentials) as channel:
             assert await _health(channel)
     finally:
         await server.stop(grace=0)
@@ -128,8 +141,9 @@ async def test_a_client_with_a_signed_certificate_is_admitted(pki: dict) -> None
 async def test_a_client_with_no_certificate_is_refused(pki: dict) -> None:
     """The point of require_client_auth: without it such a caller gets through
     and every servicer has to check for itself."""
+    port = _free_port()
     server = await _serve(
-        50232,
+        port,
         ServerTls(
             certificate=pki["server"][0],
             private_key=pki["server"][1],
@@ -138,7 +152,7 @@ async def test_a_client_with_no_certificate_is_refused(pki: dict) -> None:
     )
     try:
         credentials = grpc.ssl_channel_credentials(root_certificates=pki["ca"])
-        async with grpc.aio.secure_channel("localhost:50232", credentials) as channel:
+        async with grpc.aio.secure_channel(f"localhost:{port}", credentials) as channel:
             assert not await _health(channel)
     finally:
         await server.stop(grace=0)
@@ -148,8 +162,9 @@ async def test_a_client_with_no_certificate_is_refused(pki: dict) -> None:
 async def test_a_certificate_from_another_ca_is_refused(pki: dict) -> None:
     """Holding *a* certificate is not the same as holding one this fleet
     issued — otherwise anyone with a CA could mint themselves in."""
+    port = _free_port()
     server = await _serve(
-        50233,
+        port,
         ServerTls(
             certificate=pki["server"][0],
             private_key=pki["server"][1],
@@ -162,7 +177,7 @@ async def test_a_certificate_from_another_ca_is_refused(pki: dict) -> None:
             private_key=pki["stranger"][1],
             certificate_chain=pki["stranger"][0],
         )
-        async with grpc.aio.secure_channel("localhost:50233", credentials) as channel:
+        async with grpc.aio.secure_channel(f"localhost:{port}", credentials) as channel:
             assert not await _health(channel)
     finally:
         await server.stop(grace=0)
@@ -170,8 +185,9 @@ async def test_a_certificate_from_another_ca_is_refused(pki: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_a_plaintext_caller_cannot_reach_a_tls_port(pki: dict) -> None:
+    port = _free_port()
     server = await _serve(
-        50234,
+        port,
         ServerTls(
             certificate=pki["server"][0],
             private_key=pki["server"][1],
@@ -179,7 +195,7 @@ async def test_a_plaintext_caller_cannot_reach_a_tls_port(pki: dict) -> None:
         ),
     )
     try:
-        async with grpc.aio.insecure_channel("localhost:50234") as channel:
+        async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
             assert not await _health(channel)
     finally:
         await server.stop(grace=0)
@@ -189,13 +205,14 @@ async def test_a_plaintext_caller_cannot_reach_a_tls_port(pki: dict) -> None:
 async def test_tls_without_a_client_ca_serves_without_demanding_one(pki: dict) -> None:
     """Encryption on its own is a legitimate configuration — a service may want
     the wire protected without issuing certificates to its callers."""
+    port = _free_port()
     server = await _serve(
-        50235,
+        port,
         ServerTls(certificate=pki["server"][0], private_key=pki["server"][1]),
     )
     try:
         credentials = grpc.ssl_channel_credentials(root_certificates=pki["ca"])
-        async with grpc.aio.secure_channel("localhost:50235", credentials) as channel:
+        async with grpc.aio.secure_channel(f"localhost:{port}", credentials) as channel:
             assert await _health(channel)
     finally:
         await server.stop(grace=0)
@@ -204,9 +221,10 @@ async def test_tls_without_a_client_ca_serves_without_demanding_one(pki: dict) -
 @pytest.mark.asyncio
 async def test_without_tls_the_port_is_the_plaintext_one_it_always_was() -> None:
     """Every existing caller passes no tls, and must keep working unchanged."""
-    server = await _serve(50236, None)
+    port = _free_port()
+    server = await _serve(port, None)
     try:
-        async with grpc.aio.insecure_channel("localhost:50236") as channel:
+        async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
             assert await _health(channel)
     finally:
         await server.stop(grace=0)
