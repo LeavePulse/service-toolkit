@@ -346,3 +346,129 @@ def test_a_local_copy_beside_the_contract_does_not_generate(
 
     with pytest.raises(SystemExit):
         codegen._generate_target(target)
+
+
+# ── a Buf workspace over the service and its contracts ────────────────────────
+
+_POLICY = """
+[tool.service_toolkit.buf.lint]
+use = ["STANDARD"]
+ignore_only = { RPC_RESPONSE_STANDARD_NAME = ["leavepulse/control/v1/inventory.proto"] }
+
+[tool.service_toolkit.buf.breaking]
+use = ["FILE"]
+"""
+
+
+def _workspace_manifest(tmp_path: Path, commit: str) -> Path:
+    manifest = _manifest(tmp_path, commit)
+    manifest.write_text(manifest.read_text() + _POLICY)
+    _materialise(manifest)
+    return manifest
+
+
+def test_the_workspace_holds_the_service_and_its_contract_as_modules(
+    tmp_path: Path, contract_repo
+) -> None:
+    import json
+
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    manifest = _workspace_manifest(tmp_path, commit)
+
+    workspace = buf_workspace.build_workspace(manifest)
+
+    assert workspace.parent == manifest.parent / ".contracts" / "buf"
+    assert (workspace / "modules/local/leavepulse/control/v1/inventory.proto").exists()
+    assert (
+        workspace / "modules/agent-contract/leavepulse/control/v1/agent.proto"
+    ).exists()
+    config = json.loads((workspace / "buf.yaml").read_text())
+    assert [m["path"] for m in config["modules"]] == [
+        "modules/local",
+        "modules/agent-contract",
+    ]
+    # Policy paths are written relative to the proto directory and land on the module.
+    assert config["lint"]["ignore_only"]["RPC_RESPONSE_STANDARD_NAME"] == [
+        "modules/local/leavepulse/control/v1/inventory.proto"
+    ]
+
+
+def test_the_workspace_is_addressed_by_its_content(
+    tmp_path: Path, contract_repo
+) -> None:
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    manifest = _workspace_manifest(tmp_path, commit)
+
+    first = buf_workspace.build_workspace(manifest)
+    assert buf_workspace.build_workspace(manifest) == first
+
+    (manifest.parent / "proto/leavepulse/control/v1/inventory.proto").write_text(
+        _INVENTORY.replace("Command last = 1;", "Command last = 1;\n  string note = 2;")
+    )
+    assert buf_workspace.build_workspace(manifest) != first
+
+
+@pytest.mark.parametrize("proto_dir", ["..", "../elsewhere", "/etc", "."])
+def test_the_service_protos_must_sit_inside_the_manifest_root(
+    tmp_path: Path, contract_repo, proto_dir: str
+) -> None:
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    manifest = _workspace_manifest(tmp_path, commit)
+    manifest.write_text(
+        manifest.read_text().replace(
+            'proto_dir = "proto"\nout_dir', f'proto_dir = "{proto_dir}"\nout_dir'
+        )
+    )
+
+    with pytest.raises(contracts.ContractError, match="is not a directory inside"):
+        buf_workspace.build_workspace(manifest)
+
+
+def test_a_policy_path_leaving_the_proto_directory_is_refused(
+    tmp_path: Path, contract_repo
+) -> None:
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    manifest = _workspace_manifest(tmp_path, commit)
+    manifest.write_text(
+        manifest.read_text().replace(
+            '["leavepulse/control/v1/inventory.proto"]', '["../../etc/passwd"]'
+        )
+    )
+
+    with pytest.raises(contracts.ContractError, match="not inside the proto directory"):
+        buf_workspace.build_workspace(manifest)
+
+
+def test_a_contract_not_yet_materialised_is_refused(
+    tmp_path: Path, contract_repo
+) -> None:
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    manifest = _manifest(tmp_path, commit)
+    manifest.write_text(manifest.read_text() + _POLICY)
+
+    with pytest.raises(contracts.ContractError, match="run lp-sync-contract"):
+        buf_workspace.build_workspace(manifest)
+
+
+def test_buf_builds_and_lints_the_workspace(tmp_path: Path, contract_repo) -> None:
+    """The service module resolves its import from the contract module locally."""
+    buf = shutil.which("buf")
+    if buf is None:
+        pytest.skip("buf CLI not installed")
+    from service_toolkit.grpc import buf_workspace
+
+    _, commit = contract_repo
+    workspace = buf_workspace.build_workspace(_workspace_manifest(tmp_path, commit))
+
+    subprocess.run([buf, "build"], cwd=workspace, check=True)
+    subprocess.run([buf, "lint", "modules/local"], cwd=workspace, check=True)
