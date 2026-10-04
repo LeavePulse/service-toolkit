@@ -13,6 +13,7 @@ from grpc_reflection.v1alpha import reflection
 if TYPE_CHECKING:
     from auth_service_sdk import JWTVerifier
 
+    from .authorization import CallerPolicy
     from .interceptors import AlternateTokenVerifier
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ def build_grpc_lifecycle(
     service_names: Sequence[str] = (),
     registrars: Sequence[ServiceRegistrar] = (),
     tls: ServerTls | None = None,
+    caller_policy: CallerPolicy | None = None,
 ) -> tuple[Callable[[], object], Callable[[], object]]:
     """Build startup/shutdown callables for Litestar ``on_startup``/``on_shutdown``.
 
@@ -220,6 +222,12 @@ def build_grpc_lifecycle(
     learning about them, and without loosening anything by default: unset means
     shared-token-only, exactly as before.
 
+    *caller_policy* (optional) — the methods decided per caller instead of by
+    the platform token (:mod:`.authorization`). Each listed method must be one
+    this server serves: startup checks every one against the registered
+    services' descriptors, after the registrars and before the port opens, and
+    refuses to start otherwise.
+
     Returns ``(startup, shutdown)`` async callables.
     """
 
@@ -239,7 +247,7 @@ def build_grpc_lifecycle(
         interceptors: list[grpc.aio.ServerInterceptor] = [
             GrpcServerMetricsInterceptor(service_name)
         ]
-        if internal_token:
+        if internal_token or caller_policy is not None:
             from .interceptors import InternalTokenInterceptor
 
             interceptors.append(
@@ -247,6 +255,7 @@ def build_grpc_lifecycle(
                     internal_token,
                     exempt_methods=internal_token_exempt_methods,
                     alternate_verifier=alternate_token_verifier,
+                    policy=caller_policy,
                 )
             )
 
@@ -272,6 +281,15 @@ def build_grpc_lifecycle(
 
         for registrar in registrars:
             registrar(server)
+
+        if caller_policy is not None:
+            served = [
+                health_pb2.DESCRIPTOR.services_by_name["Health"].full_name,
+                *service_names,
+            ]
+            if reflection_enabled:
+                served.append(reflection.SERVICE_NAME)
+            caller_policy.check_served(served)
 
         await start_grpc_server(server)
         logger.info("%s gRPC server started on port %d", service_name, port)

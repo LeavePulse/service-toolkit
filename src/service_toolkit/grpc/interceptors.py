@@ -9,6 +9,8 @@ from typing import Any
 
 import grpc
 
+from .authorization import CallerPolicy, authorize_listed, refusing
+
 logger = logging.getLogger(__name__)
 
 #: Checks a token the shared secret did not match. Called with the RPC's method
@@ -29,18 +31,28 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
 
     Replaces the HTTP ``require_internal_token()`` guard used by
     internal Litestar controllers.
+
+    A method listed in *policy* is decided by the policy alone (see
+    :mod:`.authorization`): the platform token, the exemptions and the
+    alternate verifier below never apply to it. Every other method keeps the
+    platform-token rule, which is a migration rule for methods not yet moved
+    into a policy. Without a platform token (a service started with
+    ``require_internal_token=False``) those other methods are not gated, as
+    before; a policy-listed method is gated either way.
     """
 
     def __init__(
         self,
-        token: str,
+        token: str | None,
         exempt_methods: Sequence[str] = (),
         alternate_verifier: AlternateTokenVerifier | None = None,
+        policy: CallerPolicy | None = None,
     ) -> None:
-        if not token:
+        if not token and policy is None:
             msg = "Internal token must not be empty."
             raise ValueError(msg)
-        self._token = token
+        self._token = token or None
+        self._policy = policy
         # Fully-qualified method names (e.g.
         # "/leavepulse.control.v1.AgentGateway/Enroll") served WITHOUT the
         # internal token — for genuine first-contact RPCs that bootstrap the
@@ -60,8 +72,15 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         continuation: Any,
         handler_call_details: grpc.HandlerCallDetails,
     ) -> Any:
-        # Allow health checks without auth
         method = handler_call_details.method or ""
+        # First, and final: a listed method never reaches the rules below.
+        if self._policy is not None and self._policy.covers(method):
+            return await authorize_listed(
+                self._policy, continuation, handler_call_details
+            )
+        if self._token is None:
+            return await continuation(handler_call_details)
+        # Allow health checks without auth
         if "grpc.health" in method or "grpc.reflection" in method:
             return await continuation(handler_call_details)
         if any(method.endswith(exempt) for exempt in self._exempt_methods):
@@ -79,16 +98,16 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
                 "gRPC auth failed for %s — invalid or missing internal token",
                 method,
             )
-
-            async def _abort(
-                request: Any, context: grpc.aio.ServicerContext,
-            ) -> None:
-                await context.abort(
-                    grpc.StatusCode.UNAUTHENTICATED,
-                    "Invalid or missing internal token",
-                )
-
-            return grpc.unary_unary_rpc_method_handler(_abort)
+            handler = await continuation(handler_call_details)
+            if handler is None:
+                return None
+            # A refusal of the method's own kind: a unary handler for a
+            # streaming method is a broken call, not a status the client reads.
+            return refusing(
+                handler,
+                grpc.StatusCode.UNAUTHENTICATED,
+                "Invalid or missing internal token",
+            )
 
         return await continuation(handler_call_details)
 

@@ -6,6 +6,10 @@ import importlib
 import sys
 
 __all__ = [
+    "CallerCredentials",
+    "CallerPolicy",
+    "CallerPolicyError",
+    "current_caller",
     "GrpcClientMetricsInterceptor",
     "GrpcServerMetricsInterceptor",
     "GrpcClient",
@@ -54,6 +58,10 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
+    "CallerCredentials": ".authorization",
+    "CallerPolicy": ".authorization",
+    "CallerPolicyError": ".authorization",
+    "current_caller": ".authorization",
     "GrpcClientMetricsInterceptor": ".metrics",
     "GrpcServerMetricsInterceptor": ".metrics",
     "GrpcClient": ".client",

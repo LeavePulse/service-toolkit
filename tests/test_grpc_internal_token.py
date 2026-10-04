@@ -8,6 +8,7 @@ default, and it must only ever be consulted after the shared secret fails.
 
 from __future__ import annotations
 
+import grpc
 import pytest
 
 from service_toolkit.grpc.interceptors import InternalTokenInterceptor
@@ -21,8 +22,11 @@ class _Details:
         )
 
 
-async def _continuation(_details: object) -> str:
-    return "handler"
+_HANDLER = grpc.unary_unary_rpc_method_handler(lambda _request, _context: None)
+
+
+async def _continuation(_details: object) -> grpc.RpcMethodHandler:
+    return _HANDLER
 
 
 async def _refused(interceptor: InternalTokenInterceptor, token: str | None) -> bool:
@@ -30,7 +34,7 @@ async def _refused(interceptor: InternalTokenInterceptor, token: str | None) -> 
     result = await interceptor.intercept_service(
         _continuation, _Details("/pkg.Svc/Method", token)
     )
-    return result != "handler"
+    return result is not _HANDLER
 
 
 @pytest.mark.asyncio
@@ -110,14 +114,14 @@ async def test_verifier_wraps_the_handler_it_admits() -> None:
     whatever it proved for the call's duration."""
 
     async def verifier(_method: str, _token: str):  # type: ignore[no-untyped-def]
-        return lambda handler: f"wrapped:{handler}"
+        return lambda handler: ("wrapped", handler)
 
     interceptor = InternalTokenInterceptor("secret", alternate_verifier=verifier)
 
     result = await interceptor.intercept_service(
         _continuation, _Details("/pkg.Svc/Method", "per-host-token")
     )
-    assert result == "wrapped:handler"
+    assert result == ("wrapped", _HANDLER)
 
 
 @pytest.mark.asyncio
@@ -134,4 +138,4 @@ async def test_health_and_reflection_bypass_the_gate() -> None:
         result = await interceptor.intercept_service(
             _continuation, _Details(method, None)
         )
-        assert result == "handler"
+        assert result is _HANDLER

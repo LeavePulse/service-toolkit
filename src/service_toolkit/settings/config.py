@@ -10,6 +10,7 @@ the standard ``BaseSettings.load(prefix=...)`` pattern.
 
 from __future__ import annotations
 
+from msgspec import field
 from msgspec_conf import BaseSettings
 
 
@@ -37,12 +38,35 @@ class DatabaseSettings(BaseSettings):
         )
 
 class InternalSettings(BaseSettings):
-    """Internal service-to-service authentication token.
+    """Internal service-to-service authentication.
 
     Default ``prefix`` when loading: ``INTERNAL_``.
+
+    ``token`` is the platform token every service holds. ``caller_tokens``
+    names the callers this service tells apart, each by its own secret
+    (``INTERNAL_CALLER_TOKENS='{"control-service": "..."}'``), for the methods
+    its ``CallerPolicy`` lists; see :mod:`service_toolkit.grpc.authorization`.
+    The variable's name carries ``TOKEN``, so the control-plane stores and shows
+    it as a secret.
     """
 
     token: str | None = None
+    caller_tokens: dict[str, str] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        """Structure only: whether a token is set and which callers are
+        known, never a secret. Settings get logged and printed whole."""
+        token = "<set>" if self.token else None
+        return (
+            f"InternalSettings(token={token!r}, "
+            f"caller_tokens={sorted(self.caller_tokens)!r})"
+        )
+
+    def __rich_repr__(self):  # type: ignore[no-untyped-def]
+        """The same redaction for rich and other pretty-printers, which read
+        this instead of ``__repr__``."""
+        yield "token", "<set>" if self.token else None
+        yield "caller_tokens", sorted(self.caller_tokens)
 
 
 class RedisCoordinationSettings(BaseSettings):
