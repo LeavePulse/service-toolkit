@@ -80,7 +80,10 @@ async def test_interceptor_aborts_with_mapped_status() -> None:
     context = MagicMock()
     context.abort = AsyncMock(return_value=None)
 
-    await wrapped.unary_unary(object(), context)
+    # grpc's abort raises, which ends the call; this mock's does not, so the
+    # mapped error itself surfaces after it.
+    with pytest.raises(_ResourceNotFoundError):
+        await wrapped.unary_unary(object(), context)
 
     context.abort.assert_awaited_once()
     assert context.abort.await_args.args[0] is grpc.StatusCode.NOT_FOUND

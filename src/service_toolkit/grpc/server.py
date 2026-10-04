@@ -7,8 +7,10 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import grpc
-from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from grpc_reflection.v1alpha import reflection
+
+from .health import HealthServicer
 
 if TYPE_CHECKING:
     from auth_service_sdk import JWTVerifier
@@ -19,6 +21,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SERVER: grpc.aio.Server | None = None
+
+#: Each created server's health servicer, keyed by the server's identity, so
+#: stopping the server can report NOT_SERVING first.
+_HEALTH: dict[int, HealthServicer] = {}
 
 
 class ServerTls(NamedTuple):
@@ -122,16 +128,13 @@ def create_grpc_server(
             ),
         )
 
-    # Health check
-    health_servicer = health.HealthServicer()
-    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-    health_servicer.set(
-        "", health_pb2.HealthCheckResponse.SERVING,
-    )
+    # Health check: this package's asyncio servicer (see .health for why not
+    # grpc_health's). "" is SERVING from construction, each named service here.
+    health_servicer = HealthServicer()
     for name in service_names:
-        health_servicer.set(
-            name, health_pb2.HealthCheckResponse.SERVING,
-        )
+        health_servicer.set(name, health_pb2.HealthCheckResponse.SERVING)
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    _HEALTH[id(server)] = health_servicer
 
     # Reflection
     if reflection_enabled:
@@ -167,6 +170,11 @@ async def stop_grpc_server(
     srv = server or _SERVER
     if srv is None:
         return
+    servicer = _HEALTH.pop(id(srv), None)
+    if servicer is not None:
+        # Every status reads NOT_SERVING from here on, and every watcher is
+        # told before the server stops taking calls.
+        servicer.enter_graceful_shutdown()
     await srv.stop(grace=grace)
     _SERVER = None
     logger.info("gRPC server stopped")

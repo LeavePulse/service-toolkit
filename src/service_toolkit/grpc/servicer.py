@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import grpc
 
+from .handlers import wrap
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -168,27 +170,23 @@ class DomainErrorServerInterceptor(grpc.aio.ServerInterceptor):
             return await continuation(handler_call_details)
 
         handler = await continuation(handler_call_details)
-        if handler is None or handler.unary_unary is None:
+        if handler is None:
             return handler
+        # Every kind, each in its own execution model: a streaming servicer
+        # raising a domain error deserves the same status as a unary one, and
+        # a plain (thread-pool) servicer must not be awaited.
+        return wrap(handler, on_error=_domain_status)
 
-        inner = handler.unary_unary
 
-        async def _wrapped(request: Any, context: grpc.aio.ServicerContext) -> Any:
-            try:
-                return await inner(request, context)
-            except grpc.aio.AbortError:
-                raise
-            except Exception as exc:  # noqa: BLE001 — re-raised when not a domain error
-                status = _grpc_status_for_exception(exc)
-                if status is None:
-                    raise
-                await context.abort(status, str(exc) or type(exc).__name__)
-
-        return grpc.unary_unary_rpc_method_handler(
-            _wrapped,
-            request_deserializer=handler.request_deserializer,
-            response_serializer=handler.response_serializer,
-        )
+def _domain_status(error: BaseException) -> tuple[grpc.StatusCode, str] | None:
+    """The status a domain *error* ends its call with; None leaves anything
+    unrecognised to grpc, which reports it as UNKNOWN with its traceback."""
+    if not isinstance(error, Exception):
+        return None
+    status = _grpc_status_for_exception(error)
+    if status is None:
+        return None
+    return status, str(error) or type(error).__name__
 
 
 __all__ = [

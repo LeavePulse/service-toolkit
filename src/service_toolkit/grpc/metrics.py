@@ -9,6 +9,8 @@ import time
 from typing import Any
 
 import grpc
+
+from .handlers import wrap
 from prometheus_client import Counter, Histogram
 
 from ..observability.metrics import metric_label
@@ -17,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 _SERVER_REQUESTS_TOTAL = Counter(
     "leavepulse_grpc_server_requests_total",
-    "Total unary gRPC requests handled by a service",
+    "Total gRPC requests handled by a service, every kind",
     ["service", "grpc_service", "grpc_method", "grpc_code"],
 )
 _SERVER_REQUEST_DURATION_SECONDS = Histogram(
     "leavepulse_grpc_server_request_duration_seconds",
-    "Latency of unary gRPC requests handled by a service",
+    "Duration of gRPC requests handled by a service, a stream over its whole life",
     ["service", "grpc_service", "grpc_method"],
 )
 _CLIENT_REQUESTS_TOTAL = Counter(
@@ -72,7 +74,6 @@ def _context_code(context: Any) -> grpc.StatusCode | None:
     code_resolver = getattr(context, "code", None)
     if not callable(code_resolver):
         return None
-
     return _coerce_status_code(code_resolver())
 
 
@@ -146,7 +147,7 @@ async def _observe_completed_client_call(
 
 
 class GrpcServerMetricsInterceptor(grpc.aio.ServerInterceptor):
-    """Record Prometheus metrics for unary-unary gRPC server calls."""
+    """Record Prometheus metrics for gRPC server calls of every kind."""
 
     def __init__(self, service_name: str) -> None:
         self._service_name = metric_label(service_name)
@@ -161,29 +162,21 @@ class GrpcServerMetricsInterceptor(grpc.aio.ServerInterceptor):
             return await continuation(handler_call_details)
 
         handler = await continuation(handler_call_details)
-        if handler is None or handler.unary_unary is None:
+        if handler is None:
             return handler
 
         grpc_service, grpc_method = _split_method(method)
 
-        async def _wrapped_unary_unary(
-            request: Any,
-            context: grpc.aio.ServicerContext,
-        ) -> Any:
+        def enter(context: Any) -> Any:
             started_at = time.perf_counter()
-            status_code = grpc.StatusCode.OK
-            try:
-                response = await handler.unary_unary(request, context)
-            except grpc.RpcError as exc:
-                status_code = exc.code()
-                raise
-            except Exception:
-                status_code = _context_code(context) or grpc.StatusCode.UNKNOWN
-                raise
-            else:
-                status_code = _context_code(context) or grpc.StatusCode.OK
-                return response
-            finally:
+
+            def end(failure: BaseException | None) -> None:
+                if isinstance(failure, grpc.RpcError):
+                    status_code = failure.code()
+                elif failure is not None:
+                    status_code = _context_code(context) or grpc.StatusCode.UNKNOWN
+                else:
+                    status_code = _context_code(context) or grpc.StatusCode.OK
                 elapsed = time.perf_counter() - started_at
                 _SERVER_REQUESTS_TOTAL.labels(
                     service=self._service_name,
@@ -197,11 +190,11 @@ class GrpcServerMetricsInterceptor(grpc.aio.ServerInterceptor):
                     grpc_method=grpc_method,
                 ).observe(elapsed)
 
-        return grpc.unary_unary_rpc_method_handler(
-            _wrapped_unary_unary,
-            request_deserializer=handler.request_deserializer,
-            response_serializer=handler.response_serializer,
-        )
+            return end
+
+        # Every kind, in its own execution model: a streaming call is counted
+        # once, over its whole life, and a plain servicer is never awaited.
+        return wrap(handler, enter=enter)
 
 
 class GrpcClientMetricsInterceptor(grpc.aio.UnaryUnaryClientInterceptor):

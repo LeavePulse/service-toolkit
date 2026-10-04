@@ -24,16 +24,17 @@ from __future__ import annotations
 
 import enum
 import hmac
-import inspect
 import logging
 import re
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
 import grpc
 from google.protobuf import descriptor_pool
+
+from .handlers import rebuild, wrap
 
 logger = logging.getLogger(__name__)
 
@@ -198,25 +199,6 @@ _REFUSALS = {
 }
 
 
-def _factory(handler: grpc.RpcMethodHandler) -> Any:
-    if handler.request_streaming and handler.response_streaming:
-        return grpc.stream_stream_rpc_method_handler
-    if handler.request_streaming:
-        return grpc.stream_unary_rpc_method_handler
-    if handler.response_streaming:
-        return grpc.unary_stream_rpc_method_handler
-    return grpc.unary_unary_rpc_method_handler
-
-
-def _behaviour(handler: grpc.RpcMethodHandler) -> Any:
-    return (
-        handler.unary_unary
-        or handler.unary_stream
-        or handler.stream_unary
-        or handler.stream_stream
-    )
-
-
 def refusing(
     handler: grpc.RpcMethodHandler, code: grpc.StatusCode, details: str
 ) -> grpc.RpcMethodHandler:
@@ -233,75 +215,18 @@ def refusing(
     async def _abort(request: Any, context: grpc.aio.ServicerContext) -> None:
         await context.abort(code, details)
 
-    behaviour: Any = _abort
-    return _factory(handler)(
-        behaviour,
-        request_deserializer=handler.request_deserializer,
-        response_serializer=handler.response_serializer,
-    )
+    return rebuild(handler, _abort)
 
 
 def as_caller(handler: grpc.RpcMethodHandler, caller: str) -> grpc.RpcMethodHandler:
-    """*handler* with :data:`current_caller` set to *caller* while it runs.
+    """*handler* with :data:`current_caller` set to *caller* while it runs,
+    in the handler's own kind and execution model (:func:`.handlers.wrap`)."""
 
-    The wrapper keeps the behaviour's own execution model: grpc.aio runs an
-    async behaviour on the event loop and a plain one on its thread pool, and
-    turning a blocking servicer into a coroutine would run it on the loop.
-    """
-    inner = _behaviour(handler)
-    behaviour: Any
-    if inspect.isasyncgenfunction(inner) or (
-        handler.response_streaming and inspect.iscoroutinefunction(inner)
-    ):
+    def enter(_context: Any) -> Callable[[BaseException | None], None]:
+        token = current_caller.set(caller)
+        return lambda _failure: current_caller.reset(token)
 
-        async def _async_stream(request: Any, context: Any) -> AsyncIterator[Any]:
-            token = current_caller.set(caller)
-            try:
-                result = inner(request, context)
-                if inspect.isasyncgen(result):
-                    async for item in result:
-                        yield item
-                else:
-                    await result
-            finally:
-                current_caller.reset(token)
-
-        behaviour = _async_stream
-    elif inspect.iscoroutinefunction(inner):
-
-        async def _async_single(request: Any, context: Any) -> Any:
-            token = current_caller.set(caller)
-            try:
-                return await inner(request, context)
-            finally:
-                current_caller.reset(token)
-
-        behaviour = _async_single
-    elif handler.response_streaming:
-
-        def _sync_stream(request: Any, context: Any) -> Iterator[Any]:
-            token = current_caller.set(caller)
-            try:
-                yield from inner(request, context)
-            finally:
-                current_caller.reset(token)
-
-        behaviour = _sync_stream
-    else:
-
-        def _sync_single(request: Any, context: Any) -> Any:
-            token = current_caller.set(caller)
-            try:
-                return inner(request, context)
-            finally:
-                current_caller.reset(token)
-
-        behaviour = _sync_single
-    return _factory(handler)(
-        behaviour,
-        request_deserializer=handler.request_deserializer,
-        response_serializer=handler.response_serializer,
-    )
+    return wrap(handler, enter=enter)
 
 
 async def authorize_listed(
