@@ -32,12 +32,34 @@ _T = TypeVar("_T")
 #: fallback, which raises a bare ``ValueError`` — no HTTP status attached, so
 #: the web layer reports a blank 500 and the real cause (an upstream that is
 #: down, overloaded or timing out) never reaches the logs or the client.
-_UPSTREAM_FAILURE_CODES = (
-    grpc.StatusCode.UNAVAILABLE,
-    grpc.StatusCode.DEADLINE_EXCEEDED,
-    grpc.StatusCode.RESOURCE_EXHAUSTED,
-    grpc.StatusCode.INTERNAL,
+#:
+#: The one definition: `grpc_call` translates by it and `is_upstream_failure`
+#: answers by it. Not in it, deliberately: UNAUTHENTICATED and
+#: PERMISSION_DENIED (the caller's credential or authority is wrong) and
+#: INVALID_ARGUMENT or FAILED_PRECONDITION (the request is), which a retry or
+#: the next attempt cannot fix and which must never pass for an outage.
+UPSTREAM_FAILURE_CODES: frozenset[grpc.StatusCode] = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+        grpc.StatusCode.RESOURCE_EXHAUSTED,
+        grpc.StatusCode.INTERNAL,
+    }
 )
+
+
+def is_upstream_failure(error: BaseException) -> bool:
+    """Whether *error* is a call that failed because the upstream did.
+
+    Reads the gRPC status, never the translated Python type: *error* is the
+    ``AioRpcError`` itself, or what `grpc_call` raised for it (which keeps the
+    ``AioRpcError`` as its ``__cause__``). Anything else, a defect included,
+    is not an upstream failure.
+    """
+    rpc = error if isinstance(error, grpc.aio.AioRpcError) else error.__cause__
+    return (
+        isinstance(rpc, grpc.aio.AioRpcError) and rpc.code() in UPSTREAM_FAILURE_CODES
+    )
 
 
 def _resource_label(resource: str | None, resource_id: object = None) -> str:
@@ -109,7 +131,7 @@ def _default_translation() -> dict[grpc.StatusCode, Any]:
             grpc.StatusCode.UNAUTHENTICATED: _fallback_auth_required,
             grpc.StatusCode.PERMISSION_DENIED: _fallback_permission_denied,
             grpc.StatusCode.ALREADY_EXISTS: _fallback_already_exists,
-            **dict.fromkeys(_UPSTREAM_FAILURE_CODES, _fallback_unavailable),
+            **dict.fromkeys(UPSTREAM_FAILURE_CODES, _fallback_unavailable),
         }
 
     def unavailable(detail: str, resource: str | None, rid: object) -> Exception:
@@ -135,7 +157,7 @@ def _default_translation() -> dict[grpc.StatusCode, Any]:
         grpc.StatusCode.ALREADY_EXISTS: lambda detail, resource, rid: InvalidInputError(
             detail or "Resource already exists"
         ),
-        **dict.fromkeys(_UPSTREAM_FAILURE_CODES, unavailable),
+        **dict.fromkeys(UPSTREAM_FAILURE_CODES, unavailable),
     }
 
 
@@ -403,10 +425,12 @@ def apply_optional_repeated(
 
 
 __all__ = [
+    "UPSTREAM_FAILURE_CODES",
     "apply_optional_fields",
     "apply_optional_repeated",
     "apply_present_fields",
     "grpc_call",
+    "is_upstream_failure",
     "message_has_field",
     "optional_bool",
     "optional_dt",
