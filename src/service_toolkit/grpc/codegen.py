@@ -46,6 +46,17 @@ are pinned in the same manifest, in the table ``lp-sync-contract``
 Generation only reads the materialised contract and fails, naming the command
 to run, when it is not on disk. Its protos are generated into the same output
 as the target's own.
+
+A contract that has its own generated distribution is imported instead, never
+emitted (``service_toolkit.grpc.imported``). The target names the installed
+package; its protos go on the include path only and every generated import of
+its modules points at the one copy that distribution ships::
+
+      [[tool.service_toolkit.grpc_proto_codegen.targets]]
+      proto_dir = "src/network_service_grpc/proto"
+      out_dir = "src/network_service_grpc/generated"
+      import_prefix = "network_service_grpc.generated.leavepulse"
+      imports = ["agent_contract_grpc"]
 """
 
 from __future__ import annotations
@@ -56,9 +67,11 @@ import re
 import shutil
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from service_toolkit.grpc import imported
 from service_toolkit.grpc.contracts import ContractPin, proto_root, read_pins
 
 
@@ -70,6 +83,8 @@ class _ProtoGenerationTarget:
     #: Further proto roots generated into the same output: the pinned
     #: contracts this target's own protos import from.
     extra_proto_dirs: tuple[Path, ...] = ()
+    #: Installed generated contracts: on the include path, never emitted.
+    imports: tuple[str, ...] = ()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -139,12 +154,35 @@ def _run_protoc(
         raise SystemExit(code)
 
 
-def _rewrite_imports(out_dir: Path, import_prefix: str) -> None:
-    pattern = re.compile(r"^from leavepulse\.", re.MULTILINE)
-    replacement = f"from {import_prefix.rstrip('.')}."
+_GENERATED_IMPORT = re.compile(
+    r"^from (?P<package>leavepulse(?:\.\w+)*) import (?P<module>\w+)",
+    re.MULTILINE,
+)
+
+
+def _rewrite_imports(
+    out_dir: Path,
+    import_prefix: str,
+    imported_roots: Mapping[str, str] | None = None,
+) -> None:
+    """Point each generated ``from leavepulse.… import …`` at its owner.
+
+    A module an imported contract defines resolves under that contract's
+    root; everything else is the target's own and moves under its prefix.
+    """
+    own = import_prefix.rstrip(".")
+    roots = imported_roots or {}
+
+    def owner(match: re.Match[str]) -> str:
+        package, module = match["package"], match["module"]
+        root = roots.get(f"{package}.{module}")
+        if root is not None:
+            return f"from {root}.{package} import {module}"
+        return f"from {own}{package.removeprefix('leavepulse')} import {module}"
+
     for path in out_dir.rglob("*_pb2*.py"):
         text = path.read_text()
-        path.write_text(pattern.sub(replacement, text))
+        path.write_text(_GENERATED_IMPORT.sub(owner, text))
 
 
 def _ensure_package_inits(out_dir: Path) -> None:
@@ -199,6 +237,13 @@ def _target_from_mapping(
         msg = f"target {out_dir_value} names undeclared contracts: {', '.join(unknown)}"
         raise SystemExit(msg)
 
+    packages = raw.get("imports") or []
+    if not isinstance(packages, list) or not all(
+        isinstance(package, str) and package.isidentifier() for package in packages
+    ):
+        msg = "a target's imports must be a list of installed Python package names."
+        raise SystemExit(msg)
+
     return _ProtoGenerationTarget(
         proto_dir=proto_dir,
         out_dir=out_dir,
@@ -206,6 +251,7 @@ def _target_from_mapping(
         extra_proto_dirs=tuple(
             proto_root(known[str(name)], base_dir=base_dir) for name in names
         ),
+        imports=tuple(packages),
     )
 
 
@@ -302,18 +348,33 @@ def _generate_target(target: _ProtoGenerationTarget) -> None:
     out_dir = target.out_dir.resolve()
 
     extra_proto_dirs = tuple(extra.resolve() for extra in target.extra_proto_dirs)
+    contracts = [imported.resolve(package) for package in target.imports]
 
     _clean_output(out_dir)
     proto_files = _collect_proto_files(proto_dir)
     for extra in extra_proto_dirs:
         proto_files.extend(_collect_proto_files(extra))
+    imported.check_not_redefined(
+        (
+            PurePosixPath(Path(file).relative_to(root).as_posix())
+            for root in (proto_dir, *extra_proto_dirs)
+            for file in proto_files
+            if Path(file).is_relative_to(root)
+        ),
+        contracts,
+    )
     _run_protoc(
         proto_dir=proto_dir,
         out_dir=out_dir,
         proto_files=proto_files,
-        extra_proto_dirs=extra_proto_dirs,
+        # Imported contracts resolve imports only; none of their files is in
+        # proto_files, so protoc emits nothing for them.
+        extra_proto_dirs=(
+            *extra_proto_dirs,
+            *(contract.proto_root for contract in contracts),
+        ),
     )
-    _rewrite_imports(out_dir, target.import_prefix)
+    _rewrite_imports(out_dir, target.import_prefix, imported.import_roots(contracts))
     _ensure_package_inits(out_dir)
     print(f"generated {target.import_prefix} → {out_dir}")  # noqa: archlint=print
 

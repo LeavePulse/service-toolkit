@@ -8,9 +8,11 @@ same contract revision codegen uses, with no registry.
 
 The workspace is a build input, not a source. It is assembled from the one
 ``[[tool.service_toolkit.grpc_proto_codegen.targets]]`` entry in the manifest
-and the contracts it names (already materialised by ``lp-sync-contract``), into
+and the contracts it names (pinned ones already materialised by
+``lp-sync-contract``, imported ones from their installed distribution), into
 ``.contracts/buf/<digest>/`` where the digest covers every file placed in it.
-The service's module is ``modules/local``; each contract is ``modules/<name>``.
+The service's module is ``modules/local``; each contract is ``modules/<name>``
+(an imported one under its package name).
 
 The Buf policy lives in the manifest, with paths relative to the service's own
 proto directory, and is written into the workspace with those paths moved under
@@ -38,6 +40,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from service_toolkit.grpc import imported
 from service_toolkit.grpc.contracts import ContractError, proto_root, read_pins
 
 LOCAL_MODULE = "modules/local"
@@ -82,8 +85,9 @@ def _moved_under_local(manifest: Path, section: str, value: object) -> object:
     return moved
 
 
-def _single_target(manifest: Path) -> tuple[Path, list[str]]:
-    """The target's own proto directory, inside the manifest root, and its contracts."""
+def _single_target(manifest: Path) -> tuple[Path, list[str], list[str]]:
+    """The target's own proto directory, inside the manifest root, its pinned
+    contracts and the installed contracts it imports."""
     data = tomllib.loads(manifest.read_text(encoding="utf-8"))
     targets = (
         data.get("tool", {})
@@ -107,7 +111,11 @@ def _single_target(manifest: Path) -> tuple[Path, list[str]]:
     ):
         msg = f"{manifest}: proto_dir {target.get('proto_dir')!r} is not a directory inside {root}."
         raise ContractError(msg)
-    return proto_dir, [str(name) for name in target.get("contracts") or []]
+    return (
+        proto_dir,
+        [str(name) for name in target.get("contracts") or []],
+        [str(package) for package in target.get("imports") or []],
+    )
 
 
 def _files(root: Path) -> list[Path]:
@@ -118,7 +126,7 @@ def build_workspace(manifest: Path) -> Path:
     """Assemble the workspace for *manifest* and return its directory."""
     manifest = manifest.resolve()
     base_dir = manifest.parent
-    proto_dir, names = _single_target(manifest)
+    proto_dir, names, packages = _single_target(manifest)
     pins = read_pins(manifest)
     unknown = [name for name in names if name not in pins]
     if unknown:
@@ -128,6 +136,10 @@ def build_workspace(manifest: Path) -> Path:
     modules = {LOCAL_MODULE: proto_dir}
     for name in names:
         modules[f"modules/{name}"] = proto_root(pins[name], base_dir=base_dir)
+    # An imported contract is checked against exactly the protos its installed
+    # distribution was generated from.
+    for package in packages:
+        modules[f"modules/{package}"] = imported.resolve(package).proto_root
 
     config = {
         "version": "v2",
