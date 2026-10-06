@@ -262,3 +262,21 @@ def test_the_buf_workspace_checks_against_the_installed_contract(
     assert (
         workspace / "modules/imptest_contract_grpc/leavepulse/imptest/v1/contract.proto"
     ).read_text() == CONTRACT_PROTO
+
+
+def test_stubs_import_the_contract_from_its_distribution_too(
+    tmp_path: Path, contract_site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(contract_site))
+    target = _consumer(tmp_path)
+
+    _generate_target(target)
+
+    stub = (target.out_dir / "leavepulse/imptest/v1/consumer_pb2.pyi").read_text()
+    assert (
+        "from imptest_contract_grpc.generated.leavepulse.imptest.v1 import "
+        "contract_pb2" in stub
+    )
+    # No generated artefact, module or stub, names a bare proto path.
+    for path in target.out_dir.rglob("*_pb2*.py*"):
+        assert "from leavepulse." not in path.read_text(), path.name

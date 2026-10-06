@@ -169,6 +169,8 @@ def _rewrite_imports(
 
     A module an imported contract defines resolves under that contract's
     root; everything else is the target's own and moves under its prefix.
+    The stubs get the same rewrite as the modules: a ``.pyi`` that still
+    imported ``leavepulse.…`` would type a message as a module nothing ships.
     """
     own = import_prefix.rstrip(".")
     roots = imported_roots or {}
@@ -180,7 +182,9 @@ def _rewrite_imports(
             return f"from {root}.{package} import {module}"
         return f"from {own}{package.removeprefix('leavepulse')} import {module}"
 
-    for path in out_dir.rglob("*_pb2*.py"):
+    for path in out_dir.rglob("*_pb2*.py*"):
+        if path.suffix not in {".py", ".pyi"}:
+            continue
         text = path.read_text()
         path.write_text(_GENERATED_IMPORT.sub(owner, text))
 
