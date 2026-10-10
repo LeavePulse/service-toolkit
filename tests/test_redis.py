@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import msgspec
 import pytest
 
 from service_toolkit.state.cache import CacheMode, LookupCache, RedisFailureMode
@@ -163,6 +164,75 @@ async def test_lookup_cache_hybrid_falls_back_to_local_when_redis_breaks() -> No
     assert await cache.get("foo", producer) == "ok"
     assert await cache.get("foo", producer) == "ok"
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_lookup_cache_treats_undecodable_redis_entry_as_miss(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeRedis()
+    client._store["cache:foo"] = b"{not json"
+    cache = LookupCache[str, dict[str, int]](
+        mode=CacheMode.HYBRID,
+        local_ttl_seconds=60.0,
+        redis_client=client,
+        redis_keyspace=Keyspace("cache"),
+        redis_ttl_seconds=60,
+    )
+
+    async def producer() -> dict[str, int]:
+        return {"value": 1}
+
+    with caplog.at_level("WARNING", logger="service_toolkit.state.cache"):
+        assert await cache.get("foo", producer) == {"value": 1}
+
+    assert client._store["cache:foo"] == b'{"value":1}'
+    assert "could not be decoded" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_lookup_cache_raise_mode_propagates_undecodable_entry() -> None:
+    client = FakeRedis()
+    client._store["cache:foo"] = b"{not json"
+    cache = LookupCache[str, str](
+        mode=CacheMode.HYBRID,
+        local_ttl_seconds=60.0,
+        redis_client=client,
+        redis_keyspace=Keyspace("cache"),
+        redis_ttl_seconds=60,
+        redis_failure_mode=RedisFailureMode.RAISE,
+    )
+
+    async def producer() -> str:
+        return "ok"
+
+    with pytest.raises(msgspec.DecodeError):
+        await cache.get("foo", producer)
+
+
+@pytest.mark.asyncio
+async def test_lookup_cache_logs_redis_read_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenGet(FakeRedis):
+        async def get(self, key: str) -> bytes | None:
+            raise ConnectionError(key)
+
+    cache = LookupCache[str, str](
+        mode=CacheMode.HYBRID,
+        local_ttl_seconds=60.0,
+        redis_client=BrokenGet(),
+        redis_keyspace=Keyspace("cache"),
+        redis_ttl_seconds=60,
+    )
+
+    async def producer() -> str:
+        return "ok"
+
+    with caplog.at_level("WARNING", logger="service_toolkit.state.cache"):
+        assert await cache.get("foo", producer) == "ok"
+
+    assert "redis cache read failed for cache:foo" in caplog.text
 
 
 @pytest.mark.asyncio

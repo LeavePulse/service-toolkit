@@ -373,15 +373,30 @@ class LookupCache(Generic[K, V]):
         if not self.redis_enabled:
             return _MISSING
         client = self._require_redis_client()
+        redis_key = self._redis_key(key)
         try:
-            data = await client.get(self._redis_key(key))
+            data = await client.get(redis_key)
         except Exception:
             if self._redis_failure_mode is RedisFailureMode.RAISE:
                 raise
+            logger.warning("redis cache read failed for %s", redis_key, exc_info=True)
             return _MISSING
         if data is None:
             return _MISSING
-        return self._decode(data)
+        try:
+            return self._decode(data)
+        except Exception:
+            # A corrupt or outdated entry (another writer, a changed shape) is a
+            # miss: the loader refills it, instead of every read failing until
+            # the entry expires.
+            if self._redis_failure_mode is RedisFailureMode.RAISE:
+                raise
+            logger.warning(
+                "redis cache entry %s could not be decoded; treated as a miss",
+                redis_key,
+                exc_info=True,
+            )
+            return _MISSING
 
     async def _set_redis(self, key: K, value: V) -> None:
         if not self.redis_enabled:
@@ -392,15 +407,13 @@ class LookupCache(Generic[K, V]):
             return
 
         client = self._require_redis_client()
+        redis_key = self._redis_key(key)
         try:
-            await client.set(
-                self._redis_key(key),
-                self._encode(value),
-                ex=ttl_seconds,
-            )
+            await client.set(redis_key, self._encode(value), ex=ttl_seconds)
         except Exception:
             if self._redis_failure_mode is RedisFailureMode.RAISE:
                 raise
+            logger.warning("redis cache write failed for %s", redis_key, exc_info=True)
 
     def _effective_local_ttl(self, value: V) -> float:
         ttl = (
