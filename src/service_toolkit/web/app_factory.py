@@ -249,7 +249,9 @@ def create_service_app(
     handlers.extend(route_handlers)
 
     # ── Plugins ──────────────────────────────────────────────────────
-    plugins: list[Any] = []
+    from .openapi_maps import IntegerKeyedMapPlugin
+
+    plugins: list[Any] = [IntegerKeyedMapPlugin()]
     if sqlalchemy_config is not None:
         from advanced_alchemy.extensions.litestar import SQLAlchemyInitPlugin
 
