@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import ssl
@@ -15,7 +16,7 @@ try:  # pragma: no cover - import guard
     from nats.aio.client import Client as _NATS
     from nats.aio.msg import Msg
     from nats.aio.subscription import Subscription
-    from nats.js.api import ConsumerConfig, ConsumerInfo, StreamConfig, StreamInfo
+    from nats.js.api import ConsumerConfig, ConsumerInfo, PubAck, StreamConfig, StreamInfo
     from nats.js.client import JetStreamContext
     from nats.js.errors import NotFoundError
 except ModuleNotFoundError as exc:  # pragma: no cover - runtime guard
@@ -36,6 +37,13 @@ DEFAULT_NATS_DRAIN_TIMEOUT = 5.0
 DEFAULT_NATS_REQUEST_TIMEOUT = 2.0
 
 MessageCallback = Callable[[Msg], Awaitable[None]]
+RequestHandler = Callable[[Msg], Awaitable[bytes | None]]
+
+#: JetStream drops a second publish carrying the same id inside the stream's
+#: duplicate window, so a retried publish cannot store the event twice.
+MSG_ID_HEADER = "Nats-Msg-Id"
+
+logger = logging.getLogger(__name__)
 
 
 class ConsumerCompatibilityError(RuntimeError):
@@ -359,6 +367,58 @@ class NATSClient:
 
         data = dumps(payload).encode("utf-8")
         await self.publish(subject, data, headers=headers)
+
+    async def publish_stream(
+        self,
+        subject: str,
+        payload: bytes | bytearray | memoryview,
+        *,
+        msg_id: str | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> PubAck:
+        """Publish to JetStream and wait for the stream to store the message.
+
+        Unlike :meth:`publish`, this fails loudly when no stream captures the
+        subject, and ``msg_id`` makes a retried publish idempotent.
+        """
+
+        js = await self.jetstream()
+        merged = dict(headers or {})
+        if msg_id:
+            merged[MSG_ID_HEADER] = msg_id
+        return await js.publish(
+            subject,
+            bytes(payload),
+            timeout=timeout or self.settings.request_timeout,
+            headers=merged or None,
+        )
+
+    async def serve(
+        self,
+        subject: str,
+        handler: RequestHandler,
+        *,
+        queue: str | None = None,
+    ) -> Subscription:
+        """Answer requests on ``subject`` with whatever ``handler`` returns.
+
+        A ``queue`` makes the replicas of one service share the requests, so
+        each is answered exactly once. ``None`` from the handler sends no
+        reply and lets the requester time out; an exception is logged and also
+        sends nothing, so a failing replica never answers with garbage.
+        """
+
+        async def respond(msg: Msg) -> None:
+            try:
+                reply = await handler(msg)
+            except Exception:
+                logger.exception("NATS request handler failed on %s", msg.subject)
+                return
+            if reply is not None and msg.reply:
+                await msg.respond(reply)
+
+        return await self.subscribe(subject, queue=queue, callback=respond)
 
     async def request(
         self,

@@ -10,9 +10,11 @@ from .events import build_event, utc_now_iso
 __all__ = [
     "BaseEventBus",
     "DEFAULT_NATS_URL",
+    "DurableConsumer",
     "LeaderElectedListener",
     "NATSClient",
     "NATSSettings",
+    "PoisonMessage",
     "build_event",
     "utc_now_iso",
 ]
@@ -20,9 +22,11 @@ __all__ = [
 _OPTIONAL_EXPORT_MODULES = {
     "BaseEventBus": ".event_bus",
     "DEFAULT_NATS_URL": ".nats",
+    "DurableConsumer": ".consumer",
     "LeaderElectedListener": ".leader_elected_listener",
     "NATSClient": ".nats",
     "NATSSettings": ".nats",
+    "PoisonMessage": ".consumer",
 }
 
 
