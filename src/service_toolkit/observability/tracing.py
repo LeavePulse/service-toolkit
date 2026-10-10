@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 from collections.abc import Mapping
@@ -110,21 +111,12 @@ def setup_tracing(
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,
         )
-        from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        from opentelemetry.instrumentation.redis import RedisInstrumentor
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
         from opentelemetry.sdk.resources import SERVICE_NAME, Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
     except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
-        missing = str(exc.name or "opentelemetry")
-        raise ModuleNotFoundError(
-            "Tracing support requires the optional 'tracing' extra. "
-            "Install with 'pip install service-toolkit[tracing]'. "
-            f"Missing module: {missing}"
-        ) from exc
+        raise _missing_extra(exc) from exc
 
     global _configured, _configured_service_name
     global _httpx_instrumented, _sqlalchemy_instrumented, _redis_instrumented
@@ -163,21 +155,53 @@ def setup_tracing(
             )
 
         if httpx_enabled and not _httpx_instrumented:
-            HTTPXClientInstrumentor().instrument()
+            _optional(
+                "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"
+            )().instrument()
             _httpx_instrumented = True
 
         if sqlalchemy_enabled and not _sqlalchemy_instrumented:
-            SQLAlchemyInstrumentor().instrument(enable_commenter=False)
+            _optional(
+                "opentelemetry.instrumentation.sqlalchemy", "SQLAlchemyInstrumentor"
+            )().instrument(enable_commenter=False)
             _sqlalchemy_instrumented = True
 
         if redis_enabled and not _redis_instrumented:
-            RedisInstrumentor().instrument()
+            _optional(
+                "opentelemetry.instrumentation.redis", "RedisInstrumentor"
+            )().instrument()
             _redis_instrumented = True
 
     def _otel_middleware(app: ASGIApp) -> ASGIApp:
-        return cast("ASGIApp", OpenTelemetryMiddleware(app))
+        middleware = _optional(
+            "opentelemetry.instrumentation.asgi", "OpenTelemetryMiddleware"
+        )
+        return cast("ASGIApp", middleware(app))
 
     return _otel_middleware
+
+
+def _missing_extra(exc: ModuleNotFoundError) -> ModuleNotFoundError:
+    missing = str(exc.name or "opentelemetry")
+    return ModuleNotFoundError(
+        "Tracing support requires the optional 'tracing' extra. "
+        "Install with 'pip install service-toolkit[tracing]'. "
+        f"Missing module: {missing}"
+    )
+
+
+def _optional(module: str, name: str) -> Any:
+    """Import one instrumentation only when it is switched on.
+
+    A worker without SQLAlchemy or an ASGI server can still trace: the
+    sqlalchemy instrumentation imports sqlalchemy itself, and the ASGI one
+    asgiref, so importing all of them up front made every consumer install
+    every instrumented library.
+    """
+    try:
+        return getattr(importlib.import_module(module), name)
+    except ModuleNotFoundError as exc:
+        raise _missing_extra(exc) from exc
 
 
 def _record_unsampled_class() -> type[Any]:

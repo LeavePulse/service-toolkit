@@ -120,3 +120,38 @@ def test_sampled_spans_are_exported_by_failure_processor() -> None:
     provider.force_flush()
     assert [span.name for span in exporter.get_finished_spans()] == ["fine"]
     provider.shutdown()
+
+
+def test_disabled_instrumentations_are_not_imported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from opentelemetry import trace
+
+    from service_toolkit.observability import tracing
+
+    for module in (
+        "opentelemetry.instrumentation.sqlalchemy",
+        "opentelemetry.instrumentation.asgi",
+        "opentelemetry.instrumentation.httpx",
+        "opentelemetry.instrumentation.redis",
+    ):
+        monkeypatch.setitem(sys.modules, module, None)
+    monkeypatch.setattr(tracing, "_configured", False)
+    installed: list[object] = []
+    monkeypatch.setattr(trace, "set_tracer_provider", installed.append)
+
+    middleware = setup_tracing(
+        service_name="worker",
+        settings=TracingSettings(enabled=True),
+        instrument_httpx=False,
+        instrument_sqlalchemy=False,
+        instrument_redis=False,
+    )
+
+    assert middleware is not None
+    assert len(installed) == 1
+    with pytest.raises(ModuleNotFoundError, match="tracing"):
+        middleware(object())  # type: ignore[arg-type]
+    installed[0].shutdown()  # type: ignore[attr-defined]
