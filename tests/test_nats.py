@@ -18,6 +18,7 @@ from service_toolkit.messaging.nats import NATSClient, NATSSettings
 class DummyConnection:
     def __init__(self) -> None:
         self.is_connected = True
+        self.is_closed = False
         self.published: list[tuple[str, bytes, dict[str, str]]] = []
         self.requests: list[tuple[str, bytes, dict[str, str] | None]] = []
         self._jetstream = DummyJetStream()
@@ -40,9 +41,11 @@ class DummyConnection:
 
     async def drain(self) -> None:
         self.is_connected = False
+        self.is_closed = True
 
     async def close(self) -> None:
         self.is_connected = False
+        self.is_closed = True
 
     def jetstream(self, *, domain: str | None = None) -> "DummyJetStream":
         self._jetstream.last_domain = domain

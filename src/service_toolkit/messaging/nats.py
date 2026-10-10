@@ -319,15 +319,27 @@ class NATSClient:
     def connected(self) -> bool:
         return self._connection is not None and self._connection.is_connected
 
-    async def connect(self) -> _NATS:
-        """Establish a NATS connection if not already connected."""
+    def _usable(self) -> _NATS | None:
+        connection = self._connection
+        if connection is None or connection.is_closed:
+            return None
+        return connection
 
-        if self._connection is not None and self._connection.is_connected:
-            return self._connection
+    async def connect(self) -> _NATS:
+        """Return the open connection, establishing one if there is none.
+
+        A connection that is reconnecting is still the connection: nats-py
+        buffers publishes and restores subscriptions once the server is back.
+        Replacing it while it reconnects would leave the old one running in the
+        background with every subscription it holds.
+        """
+
+        if (connection := self._usable()) is not None:
+            return connection
 
         async with self._lock:
-            if self._connection is not None and self._connection.is_connected:
-                return self._connection
+            if (connection := self._usable()) is not None:
+                return connection
 
             self._connection = await connect(**self.settings.connection_options())
             self._jetstream = None

@@ -156,6 +156,7 @@ async def test_serve_replies_and_stays_silent_on_none_or_error(
 
     class Connection:
         is_connected = True
+        is_closed = False
 
         async def subscribe(
             self, subject: str, queue: str | None = None, cb: Any = None
@@ -236,6 +237,45 @@ async def test_consumer_rebinds_after_losing_the_connection() -> None:
     assert js.binds == 2
     assert handled == [after]
     assert after.settled == [("ack", None)]
+
+
+@pytest.mark.asyncio
+async def test_consumer_keeps_its_binding_on_a_bare_fetch_timeout() -> None:
+    handled: list[FakeMsg] = []
+
+    async def handler(msg: FakeMsg) -> None:
+        handled.append(msg)
+
+    after = FakeMsg()
+    js = FakeJetStream([FakeSubscription([TimeoutError(), [after]])])
+    consumer = consumer_for(FakeClient(js), handler)
+
+    await run_until_idle(consumer, js)
+
+    assert js.binds == 1
+    assert handled == [after]
+
+
+@pytest.mark.asyncio
+async def test_connect_reuses_a_reconnecting_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[SimpleNamespace] = []
+
+    async def fake_connect(**_: object) -> SimpleNamespace:
+        connection = SimpleNamespace(is_connected=True, is_closed=False)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(nats_helpers, "connect", fake_connect)
+    client = NATSClient(NATSSettings())
+    first = await client.connect()
+    first.is_connected = False
+
+    assert await client.connect() is first
+    first.is_closed = True
+    assert await client.connect() is not first
+    assert len(opened) == 2
 
 
 def test_backoff_repeats_the_last_delay() -> None:

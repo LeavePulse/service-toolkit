@@ -40,7 +40,10 @@ class DurableConsumer:
     be idempotent. A failing handler gets the message back after the next
     ``backoff`` delay until ``max_deliver`` is reached; :class:`PoisonMessage`
     ends it at once. Losing the connection pauses the loop instead of ending
-    it, so one consumer task survives a NATS restart.
+    it, so one consumer task survives a NATS restart. An empty fetch is not a
+    lost connection: nats-py sometimes ends one with the bare
+    ``asyncio.TimeoutError``, which is an ``OSError`` since Python 3.11, so it
+    is matched before the connection errors.
 
     ``durable`` names the consumer group: every replica that uses the same
     name shares the work, a different name gets its own copy of each message.
@@ -124,7 +127,7 @@ class DurableConsumer:
                         messages = await subscription.fetch(
                             self.batch, timeout=self.fetch_timeout
                         )
-                    except FetchTimeoutError, NATSTimeoutError:
+                    except FetchTimeoutError, NATSTimeoutError, TimeoutError:
                         continue
                     for msg in messages:
                         await self.handle(msg)
