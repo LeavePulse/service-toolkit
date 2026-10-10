@@ -478,7 +478,7 @@ class NATSClient:
         subjects: Sequence[str],
         *,
         config: StreamConfig | None = None,
-        default_max_age: int | None = 86400_000_000_000,  # 24 hours in nanoseconds
+        default_max_age: float | None = 86400.0,  # 24 hours in seconds
         default_max_bytes: int | None = 2_147_483_648,  # 2 GiB
     ) -> StreamInfo:
         """Ensure that a JetStream stream exists.
@@ -487,7 +487,9 @@ class NATSClient:
             name: Stream name
             subjects: List of subjects to bind to the stream
             config: Optional StreamConfig for custom settings
-            default_max_age: Default max_age in nanoseconds (24h by default, None for unlimited)
+            default_max_age: Default max_age in seconds (24h by default, None for unlimited).
+                nats-py converts it to nanoseconds itself, so a value already in
+                nanoseconds would keep messages for millions of years.
             default_max_bytes: Default max_bytes (2 GiB by default, None for unlimited)
 
         Returns:

@@ -248,6 +248,8 @@ async def test_ensure_stream_and_consumer(monkeypatch: pytest.MonkeyPatch) -> No
     js = connection._jetstream
     assert js.add_stream_calls
     assert js.last_domain == "events"
+    created = js.add_stream_calls[0]
+    assert created.as_dict()["max_age"] == 86400 * 1_000_000_000
 
     await client.ensure_consumer("auth_stream", "sync-core")
     assert js.add_consumer_calls
