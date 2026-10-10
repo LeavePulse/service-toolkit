@@ -64,3 +64,59 @@ def test_app_factory_passes_typed_tracing_policy(
     )
 
     assert captured == [policy]
+
+
+def test_failed_unsampled_spans_are_exported_and_others_dropped() -> None:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+    from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+    from opentelemetry.trace import Status, StatusCode
+
+    from service_toolkit.observability.tracing import (
+        _failure_exporting_processor,
+        _record_unsampled_class,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(
+        sampler=ParentBased(_record_unsampled_class()(TraceIdRatioBased(0.0)))
+    )
+    provider.add_span_processor(_failure_exporting_processor()(exporter))
+    tracer = provider.get_tracer("test")
+
+    with tracer.start_as_current_span("quiet") as quiet:
+        assert quiet.is_recording()
+    with tracer.start_as_current_span("broken") as broken:
+        broken.set_status(Status(StatusCode.ERROR, "boom"))
+
+    provider.force_flush()
+    assert [span.name for span in exporter.get_finished_spans()] == ["broken"]
+    provider.shutdown()
+
+
+def test_sampled_spans_are_exported_by_failure_processor() -> None:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+    from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+
+    from service_toolkit.observability.tracing import (
+        _failure_exporting_processor,
+        _record_unsampled_class,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(
+        sampler=ParentBased(_record_unsampled_class()(TraceIdRatioBased(1.0)))
+    )
+    provider.add_span_processor(_failure_exporting_processor()(exporter))
+
+    with provider.get_tracer("test").start_as_current_span("fine"):
+        pass
+
+    provider.force_flush()
+    assert [span.name for span in exporter.get_finished_spans()] == ["fine"]
+    provider.shutdown()

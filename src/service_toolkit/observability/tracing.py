@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from service_toolkit.settings import TracingSettings
 
@@ -60,12 +60,19 @@ def setup_tracing(
     instrument_httpx: bool | None = None,
     instrument_sqlalchemy: bool | None = None,
     instrument_redis: bool | None = None,
+    export_failed_unsampled: bool = False,
 ) -> MiddlewareFactory | None:
     """Configure global OpenTelemetry provider and return ASGI middleware class.
 
     ``settings`` is the typed observability policy. Omitting it loads the
     standard ``OTEL_*`` spelling through :class:`TracingSettings`, preserving
     compatibility while keeping environment parsing out of tracing logic.
+
+    ``export_failed_unsampled`` keeps errors visible under partial sampling:
+    traces the ratio sampler would drop are still recorded in memory, and a
+    span that ends with an error status is exported anyway. Without it a
+    sampling ratio below 1 silently loses that share of failures, so a trace
+    link attached to an error report leads nowhere.
     """
 
     tracing = settings or TracingSettings.load(prefix="OTEL_")
@@ -127,16 +134,23 @@ def setup_tracing(
             resource_attributes = _parse_resource_attributes(tracing.resource_attributes)
             resource_attributes.setdefault(SERVICE_NAME, service_name)
             resource = Resource.create(resource_attributes)
+            ratio_sampler = TraceIdRatioBased(sample_ratio)
+            if export_failed_unsampled:
+                root_sampler = _record_unsampled_class()(ratio_sampler)
+                processor_class = _failure_exporting_processor()
+            else:
+                root_sampler = ratio_sampler
+                processor_class = BatchSpanProcessor
             provider = TracerProvider(
                 resource=resource,
-                sampler=ParentBased(TraceIdRatioBased(sample_ratio)),
+                sampler=ParentBased(root_sampler),
             )
             exporter = OTLPSpanExporter(
                 endpoint=endpoint,
                 headers=dict(headers),
                 insecure=bool(insecure),
             )
-            provider.add_span_processor(BatchSpanProcessor(exporter))
+            provider.add_span_processor(processor_class(exporter))
             trace.set_tracer_provider(provider)
             _configured = True
             _configured_service_name = service_name
@@ -164,6 +178,48 @@ def setup_tracing(
         return cast("ASGIApp", OpenTelemetryMiddleware(app))
 
     return _otel_middleware
+
+
+def _record_unsampled_class() -> type[Any]:
+    from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
+
+    class RecordUnsampled(Sampler):
+        """Ratio sampling that records, instead of dropping, the rest."""
+
+        def __init__(self, inner: Sampler) -> None:
+            self._inner = inner
+
+        def should_sample(self, *args: Any, **kwargs: Any) -> SamplingResult:
+            result = self._inner.should_sample(*args, **kwargs)
+            if result.decision is Decision.DROP:
+                return SamplingResult(
+                    Decision.RECORD_ONLY, None, result.trace_state
+                )
+            return result
+
+        def get_description(self) -> str:
+            return f"RecordUnsampled{{{self._inner.get_description()}}}"
+
+    return RecordUnsampled
+
+
+def _failure_exporting_processor() -> type[Any]:
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.trace import StatusCode
+
+    class FailureExportingProcessor(BatchSpanProcessor):
+        """Batch export of sampled spans plus unsampled ones that failed."""
+
+        def on_end(self, span: ReadableSpan) -> None:
+            context = span.context
+            sampled = bool(context and context.trace_flags.sampled)
+            if sampled or span.status.status_code is StatusCode.ERROR:
+                # Not ``super().on_end``: its first check discards every
+                # unsampled span, failed or not.
+                self._batch_processor.emit(span)
+
+    return FailureExportingProcessor
 
 
 __all__ = ["setup_tracing"]

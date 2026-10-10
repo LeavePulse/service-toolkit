@@ -83,6 +83,15 @@ if OpenTelemetryMiddleware is not None:
 - `OTEL_RESOURCE_ATTRIBUTES` (`k=v,k2=v2`)
 - `OTEL_INSTRUMENT_HTTPX`, `OTEL_INSTRUMENT_SQLALCHEMY`, `OTEL_INSTRUMENT_REDIS` (bool, default `true`)
 
+With a sampling ratio below `1.0`, pass `export_failed_unsampled=True` to keep
+failures visible: traces the ratio would drop are recorded in memory, and a span
+that ends with an error status is exported anyway.
+
+`build_shared_async_client()` returns one `httpx.AsyncClient` per key for the
+whole process. Besides `base_url`, `headers` and `timeout_seconds` it accepts a
+full `httpx.Timeout` (`timeout=`), pool `limits=` and connect `retries=`; reusing
+a key with a different configuration raises instead of silently sharing.
+
 ```python
 from service_toolkit.messaging.nats import NATSClient, NATSSettings
 
