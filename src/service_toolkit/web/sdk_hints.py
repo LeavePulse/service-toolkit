@@ -205,13 +205,21 @@ def _hints_to_extensions(hints: Mapping[str, Any]) -> dict[str, Any]:
     return extensions
 
 
-def stamp_sdk_hints(app: Litestar) -> None:
+def stamp_sdk_hints(app: Litestar, *, explicit_operations: bool = False) -> None:
     """Inject ``x-sdk-*`` extensions into the rendered OpenAPI document.
 
     Walks registered HTTP handlers, reads the hints stored in
     ``handler.opt['x_sdk']``, and writes the corresponding ``x-sdk-*`` keys
     into the matching operation object of the OpenAPI ``paths`` dict, matched
     by ``operationId``. Safe to call once after app construction.
+
+    With ``explicit_operations``, a handler that names its own
+    ``operation_id`` joins the SDK as a plain procedure even without
+    :func:`sdk_operation`: naming the operation is the decision to publish it,
+    and a service whose SDK is a flat set of procedures would otherwise repeat
+    an empty ``@sdk_operation()`` above every such route. Handlers left to the
+    generated id stay out, and ``@sdk_operation`` still carries any richer
+    hint (resource, pagination, links).
     """
     from litestar._openapi.plugin import OpenAPIPlugin
     from litestar.handlers import HTTPRouteHandler
@@ -224,11 +232,13 @@ def stamp_sdk_hints(app: Litestar) -> None:
                 continue
             if skip_methods >= set(handler.http_methods):
                 continue
-            hints = (handler.opt or {}).get(_OPT_KEY)
-            if not hints:
-                continue
             operation_id = handler.operation_id
             if not isinstance(operation_id, str) or not operation_id:
+                continue
+            hints = (handler.opt or {}).get(_OPT_KEY)
+            if not hints and explicit_operations:
+                hints = {"schema_version": SDK_SCHEMA_VERSION}
+            if not hints:
                 continue
             hints_by_operation_id[operation_id] = _hints_to_extensions(hints)
 

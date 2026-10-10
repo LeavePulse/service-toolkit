@@ -141,6 +141,9 @@ def create_service_app(
     # schema (e.g. lift Snowflake ids into a named component). Generic services
     # leave this empty.
     openapi_postprocess: Sequence[Callable[[dict[str, Any]], None]] = (),
+    # Publish every handler with an explicit ``operation_id`` as an SDK
+    # procedure, without ``@sdk_operation`` on each (see ``stamp_sdk_hints``).
+    sdk_explicit_operations: bool = False,
     # Conditional-request support: stamp an ETag on cacheable GET responses and
     # answer a matching If-None-Match with 304. Disable for services with no
     # cacheable GET. ``etag_exclude_patterns`` are path regexes skipped entirely
@@ -324,7 +327,7 @@ def create_service_app(
 
     from .sdk_hints import stamp_sdk_hints
 
-    stamp_sdk_hints(app)
+    stamp_sdk_hints(app, explicit_operations=sdk_explicit_operations)
 
     if openapi_postprocess:
         _apply_openapi_postprocess(app, openapi_postprocess)
