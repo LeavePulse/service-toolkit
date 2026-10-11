@@ -7,8 +7,19 @@ events drop stale entries before TTL expiry.
 The stub protocol is structural: any object exposing an async
 ``ResolvePlatformPerms(request)`` callable returning a response with
 ``bits`` / ``version`` / ``roles`` / ``max_role_weight`` integer-compatible
-attributes is accepted. This keeps the toolkit free of any provider-specific
-imports (e.g. ``auth_service_grpc``).
+attributes is accepted, plus an optional ``scopes`` list of granted permission
+codes. This keeps the toolkit free of any provider-specific imports (e.g.
+``auth_service_grpc``).
+
+Two questions, two answers:
+
+* :meth:`PlatformPermsResolver.has_code` answers for a code of the PLATFORM
+  catalog, the one bit space the provider packs ``bits`` from. A bit index from
+  any other catalog names a different permission in that space, so the resolver
+  refuses a mapping other than the one it was built with.
+* :meth:`PlatformPermsResolver.has_scope` answers for any code by its exact
+  string, from the scopes the provider resolved. It is the gate for every code
+  outside the platform catalog.
 """
 
 from __future__ import annotations
@@ -37,6 +48,7 @@ class _PermsResponseProto(Protocol):
     version: int
     roles: list[str]
     max_role_weight: int
+    scopes: list[str]
 
 
 class PermsStubProto(Protocol):
@@ -59,6 +71,7 @@ class _CacheEntry:
     version: int
     roles: tuple[str, ...]
     max_role_weight: int
+    scopes: frozenset[str]
     fetched_at: float
 
 
@@ -87,6 +100,7 @@ class PlatformPerms:
     version: int
     roles: tuple[str, ...] = field(default_factory=tuple)
     max_role_weight: int = 0
+    scopes: frozenset[str] = field(default_factory=frozenset)
 
 
 class PlatformPermsResolver:
@@ -102,8 +116,13 @@ class PlatformPermsResolver:
         invalidation_subject_prefix: str = "auth.rbac.user.invalidated",
         role_invalidation_subject_prefix: str = "auth.rbac.role.invalidated",
         metrics: ResolverMetrics | None = None,
+        platform_bit_mapping: dict[str, int] | None = None,
     ) -> None:
         self._stub = stub
+        # The catalog the provider packs ``bits`` from. When given, has_code
+        # refuses any other mapping instead of reading its indices against
+        # this space (dcim.view at bit 0 meant platform.audit.view).
+        self._platform_bit_mapping = platform_bit_mapping
         self._request_factory = request_factory
         self._ttl = float(ttl_seconds)
         self._max_entries = int(max_entries)
@@ -130,9 +149,7 @@ class PlatformPermsResolver:
     def role_subject_pattern(self) -> str:
         return f"{self._role_subject_prefix}.>"
 
-    async def get(
-        self, user_id: int, *, tenant_id: int | None = None
-    ) -> PlatformPerms:
+    async def get(self, user_id: int, *, tenant_id: int | None = None) -> PlatformPerms:
         uid = int(user_id)
         key: _SubjectKey = (uid, None if tenant_id is None else int(tenant_id))
         now = time.monotonic()
@@ -145,6 +162,7 @@ class PlatformPermsResolver:
                 version=entry.version,
                 roles=entry.roles,
                 max_role_weight=entry.max_role_weight,
+                scopes=entry.scopes,
             )
 
         self.metrics.cache_misses += 1
@@ -155,6 +173,7 @@ class PlatformPermsResolver:
             version=fresh.version,
             roles=fresh.roles,
             max_role_weight=fresh.max_role_weight,
+            scopes=fresh.scopes,
         )
 
     async def bits(self, user_id: int, *, tenant_id: int | None = None) -> int:
@@ -169,11 +188,44 @@ class PlatformPermsResolver:
         *,
         tenant_id: int | None = None,
     ) -> bool:
+        """Whether the user holds *code* of the PLATFORM catalog.
+
+        Only the catalog the provider packs ``bits`` from is meaningful here.
+        Passing another catalog raises: its indices would be read against the
+        platform space and grant whatever platform code shares the index. Use
+        :meth:`has_scope` for a code outside the platform catalog.
+        """
+        if (
+            self._platform_bit_mapping is not None
+            and bit_mapping is not self._platform_bit_mapping
+            and bit_mapping != self._platform_bit_mapping
+        ):
+            msg = (
+                f"has_code({code!r}) was given a catalog other than the platform "
+                "one the bits are packed from; use has_scope for this code"
+            )
+            raise ValueError(msg)
         bit = bit_mapping.get(code)
         if bit is None:
             return False
         bits = await self.bits(int(user_id), tenant_id=tenant_id)
         return bool(bits & (1 << int(bit)))
+
+    async def has_scope(
+        self,
+        user_id: int,
+        code: str,
+        *,
+        tenant_id: int | None = None,
+    ) -> bool:
+        """Whether the user holds *code*, by its exact string.
+
+        Answered from the scopes the provider resolved, cached and invalidated
+        with the bits. A code nobody granted, a code the provider does not know,
+        and a provider too old to send scopes all deny.
+        """
+        snapshot = await self.get(int(user_id), tenant_id=tenant_id)
+        return code in snapshot.scopes
 
     def invalidate(self, user_id: int) -> None:
         """Drop every cached answer for a user: global and every tenant."""
@@ -252,6 +304,7 @@ class PlatformPermsResolver:
             version=int(getattr(response, "version", 0) or 0),
             roles=tuple(str(r) for r in getattr(response, "roles", []) or []),
             max_role_weight=int(getattr(response, "max_role_weight", 0) or 0),
+            scopes=frozenset(str(s) for s in getattr(response, "scopes", []) or []),
             fetched_at=time.monotonic(),
         )
 
@@ -285,7 +338,7 @@ class PlatformPermsResolver:
             data = payload.get("data") if isinstance(payload, dict) else None
             if isinstance(data, dict) and "user_id" in data:
                 self.invalidate(int(data["user_id"]))
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except ValueError, KeyError, TypeError, json.JSONDecodeError:
             logger.exception("Failed to handle RBAC user invalidation message")
 
     async def _handle_role_invalidation(self, msg: Any) -> None:
@@ -298,7 +351,7 @@ class PlatformPermsResolver:
             user_ids = data.get("user_ids") or []
             if isinstance(user_ids, list):
                 self.invalidate_many([int(uid) for uid in user_ids])
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except ValueError, KeyError, TypeError, json.JSONDecodeError:
             logger.exception("Failed to handle RBAC role invalidation message")
 
     def _user_id_from_subject(self, subject: str) -> int | None:
@@ -308,7 +361,7 @@ class PlatformPermsResolver:
         tail = subject[len(prefix) :]
         try:
             return int(tail)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
 

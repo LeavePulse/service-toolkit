@@ -1,4 +1,4 @@
-"""The live resolver caches each subject's platform bits, and fences its fetches."""
+"""The live resolver answers platform bits and exact scopes, and never mixes them."""
 
 from __future__ import annotations
 
@@ -11,13 +11,10 @@ import pytest
 
 from service_toolkit.security.platform_perms_resolver import PlatformPermsResolver
 
+# A platform space and a second catalog that reuses its indices, which is
+# exactly what made dcim.view read as platform.audit.view.
 _PLATFORM = {"platform.audit.view": 0, "platform.staff.manage": 1}
-#: The grant the tests move around: held, it sets bit 0.
-_GRANT = "platform.audit.view"
-
-
-def _bits(codes: list[str]) -> int:
-    return sum(1 << _PLATFORM[c] for c in codes if c in _PLATFORM)
+_OTHER = {"dcim.view": 0, "dcim.manage": 1}
 
 
 @dataclass
@@ -27,6 +24,7 @@ class _Response:
     version: int = 1
     roles: list[str] = field(default_factory=list)
     max_role_weight: int = 0
+    scopes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -39,13 +37,16 @@ class _Stub:
         return self.responses[request["user_id"]]
 
 
-def _resolver(stub: Any) -> PlatformPermsResolver:
+def _resolver(
+    stub: Any, *, platform: dict[str, int] | None = _PLATFORM
+) -> PlatformPermsResolver:
     return PlatformPermsResolver(
         stub=stub,
         request_factory=lambda *, user_id, tenant_id: {
             "user_id": user_id,
             "tenant_id": tenant_id,
         },
+        platform_bit_mapping=platform,
     )
 
 
@@ -53,11 +54,112 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def test_a_platform_holder_is_not_granted_a_code_of_another_catalog() -> None:
+    stub = _Stub(
+        {
+            1: _Response(
+                user_id=1,
+                bits=0b11,
+                scopes=["platform.audit.view", "platform.staff.manage"],
+            )
+        }
+    )
+    resolver = _resolver(stub)
+
+    async def check() -> None:
+        assert await resolver.has_code(1, "platform.audit.view", _PLATFORM)
+        assert await resolver.has_code(1, "platform.staff.manage", _PLATFORM)
+        assert not await resolver.has_scope(1, "dcim.view")
+        assert not await resolver.has_scope(1, "dcim.manage")
+        with pytest.raises(ValueError, match="has_scope"):
+            await resolver.has_code(1, "dcim.view", _OTHER)
+
+    _run(check())
+
+
+def test_a_scope_grants_exactly_its_own_code() -> None:
+    stub = _Stub({2: _Response(user_id=2, bits=0, scopes=["dcim.view"])})
+    resolver = _resolver(stub)
+
+    async def check() -> None:
+        assert await resolver.has_scope(2, "dcim.view")
+        assert not await resolver.has_scope(2, "dcim.manage")
+        assert not await resolver.has_scope(2, "dcim.vie")
+        assert not await resolver.has_scope(2, "")
+        assert not await resolver.has_code(2, "platform.audit.view", _PLATFORM)
+
+    _run(check())
+
+
+def test_unknown_codes_and_providers_without_scopes_deny() -> None:
+    class _Old:
+        """A provider built before scopes existed: the field is simply absent."""
+
+        user_id = 3
+        bits = 0b1
+        version = 1
+        roles: list[str] = []
+        max_role_weight = 0
+
+    class _OldStub:
+        async def ResolvePlatformPerms(self, request: Any) -> _Old:  # noqa: N802
+            return _Old()
+
+    resolver = _resolver(_OldStub())
+
+    async def check() -> None:
+        assert not await resolver.has_scope(3, "dcim.view")
+        assert not await resolver.has_scope(3, "infra.transport.authority")
+        assert await resolver.has_code(3, "platform.audit.view", _PLATFORM)
+
+    _run(check())
+
+
+def test_scopes_ride_the_bits_cache_and_its_invalidation() -> None:
+    stub = _Stub({4: _Response(user_id=4, bits=0, scopes=["dcim.manage"])})
+    resolver = _resolver(stub)
+
+    async def check() -> None:
+        assert await resolver.has_scope(4, "dcim.manage")
+        assert await resolver.has_scope(4, "dcim.manage")
+        assert len(stub.calls) == 1, "the second answer comes from the cache"
+        stub.responses[4] = _Response(user_id=4, bits=0, scopes=[])
+        assert await resolver.has_scope(4, "dcim.manage"), "still cached"
+        resolver.invalidate(4)
+        assert not await resolver.has_scope(4, "dcim.manage")
+        assert len(stub.calls) == 2
+
+    _run(check())
+
+
+def test_the_tenant_reaches_the_provider_exactly_as_for_bits() -> None:
+    stub = _Stub({5: _Response(user_id=5, bits=0, scopes=["colo.scan"])})
+    resolver = _resolver(stub)
+
+    async def check() -> None:
+        assert await resolver.has_scope(5, "colo.scan", tenant_id=77)
+        resolver.invalidate(5)
+        await resolver.bits(5, tenant_id=77)
+        assert stub.calls == [(5, 77), (5, 77)]
+
+    _run(check())
+
+
+def test_a_resolver_built_without_a_platform_catalog_keeps_the_old_contract() -> None:
+    stub = _Stub({6: _Response(user_id=6, bits=0b1)})
+    resolver = _resolver(stub, platform=None)
+
+    async def check() -> None:
+        assert await resolver.has_code(6, "platform.audit.view", _PLATFORM)
+
+    _run(check())
+
+
 @dataclass
 class _TenantStub:
     """Answers per (user, tenant): a tenant-bound grant only under its tenant."""
 
-    grants: dict[tuple[int, int | None], list[str]]
+    scopes: dict[tuple[int, int | None], list[str]]
     calls: list[tuple[int, int | None]] = field(default_factory=list)
     gate: asyncio.Event | None = None
 
@@ -66,18 +168,18 @@ class _TenantStub:
         self.calls.append(key)
         if self.gate is not None:
             await self.gate.wait()
-        return _Response(user_id=key[0], bits=_bits(self.grants.get(key, [])))
+        return _Response(user_id=key[0], bits=0, scopes=self.scopes.get(key, []))
 
 
 def test_a_global_read_does_not_answer_a_tenant_read() -> None:
-    stub = _TenantStub({(1, None): [], (1, 7): [_GRANT]})
+    stub = _TenantStub({(1, None): [], (1, 7): ["colo.scan"]})
     resolver = _resolver(stub)
 
     async def check() -> None:
-        assert not await resolver.has_code(1, _GRANT, _PLATFORM)
-        assert await resolver.has_code(1, _GRANT, _PLATFORM, tenant_id=7)
+        assert not await resolver.has_scope(1, "colo.scan")
+        assert await resolver.has_scope(1, "colo.scan", tenant_id=7)
         assert stub.calls == [(1, None), (1, 7)], "the tenant read fetched"
-        assert not await resolver.has_code(1, _GRANT, _PLATFORM), (
+        assert not await resolver.has_scope(1, "colo.scan"), (
             "and the global stays global"
         )
 
@@ -85,14 +187,14 @@ def test_a_global_read_does_not_answer_a_tenant_read() -> None:
 
 
 def test_one_tenant_does_not_answer_for_another() -> None:
-    stub = _TenantStub({(1, 7): [_GRANT], (1, 8): []})
+    stub = _TenantStub({(1, 7): ["colo.scan"], (1, 8): []})
     resolver = _resolver(stub)
 
     async def check() -> None:
-        assert await resolver.has_code(1, _GRANT, _PLATFORM, tenant_id=7)
-        assert not await resolver.has_code(1, _GRANT, _PLATFORM, tenant_id=8)
+        assert await resolver.has_scope(1, "colo.scan", tenant_id=7)
+        assert not await resolver.has_scope(1, "colo.scan", tenant_id=8)
         assert stub.calls == [(1, 7), (1, 8)]
-        assert await resolver.has_code(1, _GRANT, _PLATFORM, tenant_id=7)
+        assert await resolver.has_scope(1, "colo.scan", tenant_id=7)
         assert len(stub.calls) == 2, "each tenant's answer is cached under its own key"
 
     _run(check())
@@ -100,7 +202,7 @@ def test_one_tenant_does_not_answer_for_another() -> None:
 
 def test_invalidating_a_user_evicts_every_tenant_variant() -> None:
     stub = _TenantStub(
-        {(1, None): [_GRANT], (1, 7): [_GRANT], (1, 8): [_GRANT], (2, None): [_GRANT]}
+        {(1, None): ["a"], (1, 7): ["b"], (1, 8): ["c"], (2, None): ["d"]}
     )
     resolver = _resolver(stub)
 
@@ -175,7 +277,7 @@ def test_a_failed_fetch_leaves_no_inflight_entry_and_is_retried() -> None:
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("auth unavailable")
-            return _Response(user_id=request["user_id"], bits=_bits([_GRANT]))
+            return _Response(user_id=request["user_id"], bits=0, scopes=["x"])
 
     stub = _Flaky()
     resolver = _resolver(stub)
@@ -185,7 +287,7 @@ def test_a_failed_fetch_leaves_no_inflight_entry_and_is_retried() -> None:
             await resolver.get(1, tenant_id=7)
         assert resolver._inflight == {}
         assert resolver.metrics.grpc_errors == 1
-        assert await resolver.has_code(1, _GRANT, _PLATFORM, tenant_id=7)
+        assert await resolver.has_scope(1, "x", tenant_id=7)
 
     _run(check())
 
@@ -217,15 +319,15 @@ class _Gated:
     """A provider whose every call answers from the grants at call time, then
     blocks until released, so a test can invalidate while a fetch is in flight."""
 
-    def __init__(self, grants: dict[tuple[int, int | None], list[str]]) -> None:
-        self.grants = grants
+    def __init__(self, scopes: dict[tuple[int, int | None], list[str]]) -> None:
+        self.scopes = scopes
         self.calls: list[tuple[int, int | None]] = []
         self.started: list[asyncio.Event] = []
         self.release: list[asyncio.Event] = []
 
     async def ResolvePlatformPerms(self, request: Any) -> _Response:  # noqa: N802
         key = (request["user_id"], request["tenant_id"])
-        answer = list(self.grants.get(key, []))
+        answer = list(self.scopes.get(key, []))
         self.calls.append(key)
         started, release = (
             self.started[len(self.calls) - 1],
@@ -233,7 +335,7 @@ class _Gated:
         )
         started.set()
         await release.wait()
-        return _Response(user_id=key[0], bits=_bits(answer))
+        return _Response(user_id=key[0], bits=0, scopes=answer)
 
     def arm(self, n: int) -> None:
         self.started = [asyncio.Event() for _ in range(n)]
@@ -258,7 +360,7 @@ async def _within(awaitable: Any, failure: str, seconds: float = 2.0) -> Any:
 
 
 async def _revoked_while_in_flight(tenant: int | None) -> None:
-    provider = _Gated({(1, tenant): [_GRANT]})
+    provider = _Gated({(1, tenant): ["dcim.manage"]})
     provider.arm(2)
     resolver = _gated_resolver(provider)
 
@@ -267,12 +369,12 @@ async def _revoked_while_in_flight(tenant: int | None) -> None:
         provider.started[0].wait(), "the first fetch never reached the provider"
     )
 
-    provider.grants[(1, tenant)] = []  # the grant is revoked...
+    provider.scopes[(1, tenant)] = []  # the grant is revoked...
     resolver.invalidate(1)  # ...and the user invalidated, mid-fetch
     provider.release[0].set()
 
     old = await _within(stale, "the original awaiter never got its answer")
-    assert old.bits & 1, "the original awaiter gets its answer"
+    assert "dcim.manage" in old.scopes, "the original awaiter gets its answer"
     assert (1, tenant) not in resolver._cache, "but the cache is not repopulated"
 
     provider.release[1].set()
@@ -280,7 +382,7 @@ async def _revoked_while_in_flight(tenant: int | None) -> None:
         resolver.get(1, tenant_id=tenant),
         "a read after the invalidation never completed",
     )
-    assert not fresh.bits & 1
+    assert "dcim.manage" not in fresh.scopes
     assert provider.calls == [(1, tenant), (1, tenant)]
     assert resolver._inflight == {}
     assert resolver._epochs == {} and resolver._running == {}
@@ -296,7 +398,7 @@ def test_an_answer_fetched_before_an_invalidation_is_not_cached_for_a_tenant() -
 
 def test_a_reader_after_an_invalidation_starts_a_fresh_fetch() -> None:
     async def check() -> None:
-        provider = _Gated({(1, None): [_GRANT]})
+        provider = _Gated({(1, None): ["dcim.manage"]})
         provider.arm(2)
         resolver = _gated_resolver(provider)
 
@@ -304,7 +406,7 @@ def test_a_reader_after_an_invalidation_starts_a_fresh_fetch() -> None:
         await _within(
             provider.started[0].wait(), "the first fetch never reached the provider"
         )
-        provider.grants[(1, None)] = []
+        provider.scopes[(1, None)] = []
         resolver.invalidate(1)
 
         fresh = asyncio.create_task(resolver.get(1))
@@ -318,17 +420,25 @@ def test_a_reader_after_an_invalidation_starts_a_fresh_fetch() -> None:
         fresh_task = resolver._inflight[(1, None)]
 
         provider.release[0].set()
-        old = await _within(stale, "the stale fetch's own awaiter never got its answer")
-        assert old.bits & 1
+        assert (
+            "dcim.manage"
+            in (
+                await _within(
+                    stale, "the stale fetch's own awaiter never got its answer"
+                )
+            ).scopes
+        )
         assert resolver._inflight.get((1, None)) is fresh_task, (
             "the stale fetch's cleanup left the fresh entry alone"
         )
         assert (1, None) not in resolver._cache
 
         provider.release[1].set()
-        new = await _within(fresh, "the fresh fetch never answered")
-        assert not new.bits & 1
-        assert resolver._cache[(1, None)].bits == 0
+        assert (
+            "dcim.manage"
+            not in (await _within(fresh, "the fresh fetch never answered")).scopes
+        )
+        assert resolver._cache[(1, None)].scopes == frozenset()
         assert resolver._epochs == {} and resolver._running == {}
 
     _run(check())
@@ -336,7 +446,7 @@ def test_a_reader_after_an_invalidation_starts_a_fresh_fetch() -> None:
 
 def test_readers_within_one_epoch_still_share_a_fetch() -> None:
     async def check() -> None:
-        provider = _Gated({(1, 7): [_GRANT]})
+        provider = _Gated({(1, 7): ["x"]})
         provider.arm(1)
         resolver = _gated_resolver(provider)
 
@@ -358,7 +468,7 @@ def test_readers_within_one_epoch_still_share_a_fetch() -> None:
 
 
 def test_an_invalidation_with_nothing_in_flight_leaves_no_epoch_behind() -> None:
-    stub = _TenantStub({(1, None): [_GRANT]})
+    stub = _TenantStub({(1, None): ["x"]})
     resolver = _resolver(stub)
 
     async def check() -> None:
