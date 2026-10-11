@@ -62,6 +62,13 @@ class _CacheEntry:
     fetched_at: float
 
 
+#: A resolved subject: the user, and the tenant the answer was resolved for.
+#: ``None`` is the global (tenant-less) resolution, a key of its own: a
+#: tenant-bound grant must never answer a global question, nor the reverse,
+#: nor one tenant's another's.
+_SubjectKey = tuple[int, int | None]
+
+
 @dataclass(slots=True)
 class ResolverMetrics:
     cache_hits: int = 0
@@ -102,8 +109,16 @@ class PlatformPermsResolver:
         self._max_entries = int(max_entries)
         self._user_subject_prefix = invalidation_subject_prefix.rstrip(".")
         self._role_subject_prefix = role_invalidation_subject_prefix.rstrip(".")
-        self._cache: dict[int, _CacheEntry] = {}
-        self._inflight: dict[int, asyncio.Task[_CacheEntry]] = {}
+        self._cache: dict[_SubjectKey, _CacheEntry] = {}
+        self._inflight: dict[_SubjectKey, asyncio.Task[_CacheEntry]] = {}
+        # Per-user invalidation epoch, fencing fetches that were already in
+        # flight when the user was invalidated: such a fetch still answers its
+        # own awaiters but never repopulates the cache. An epoch only matters
+        # while a fetch for that user is running, so both maps hold users with
+        # a running fetch and nothing else: they are bounded by concurrency,
+        # not by how many users were ever seen.
+        self._epochs: dict[int, int] = {}
+        self._running: dict[int, int] = {}
         self._lock = asyncio.Lock()  # noqa: archlint=cache-lock — subject-invalidated resolver cache, not a generic LookupCache
         self.metrics = metrics or ResolverMetrics()
 
@@ -119,8 +134,9 @@ class PlatformPermsResolver:
         self, user_id: int, *, tenant_id: int | None = None
     ) -> PlatformPerms:
         uid = int(user_id)
+        key: _SubjectKey = (uid, None if tenant_id is None else int(tenant_id))
         now = time.monotonic()
-        entry = self._cache.get(uid)
+        entry = self._cache.get(key)
         if entry is not None and (now - entry.fetched_at) < self._ttl:
             self.metrics.cache_hits += 1
             return PlatformPerms(
@@ -132,7 +148,7 @@ class PlatformPermsResolver:
             )
 
         self.metrics.cache_misses += 1
-        fresh = await self._fetch_and_cache(uid, tenant_id)
+        fresh = await self._fetch_and_cache(key)
         return PlatformPerms(
             user_id=uid,
             bits=fresh.bits,
@@ -160,37 +176,65 @@ class PlatformPermsResolver:
         return bool(bits & (1 << int(bit)))
 
     def invalidate(self, user_id: int) -> None:
-        """Drop a single user's cached entry."""
-        self._cache.pop(int(user_id), None)
+        """Drop every cached answer for a user: global and every tenant."""
+        self.invalidate_many([int(user_id)])
 
     def invalidate_many(self, user_ids: list[int]) -> None:
-        for uid in user_ids:
-            self._cache.pop(int(uid), None)
+        """Drop every answer for these users and fence their fetches in flight.
+
+        Each user's epoch moves on, so a fetch that started before this call
+        stores nothing; its in-flight entries leave the coalescing map, so a
+        reader after this call starts (or joins) a fresh fetch instead of
+        awaiting the stale one.
+        """
+        doomed = {int(uid) for uid in user_ids}
+        for uid in doomed:
+            if uid in self._running:
+                self._epochs[uid] = self._epochs.get(uid, 0) + 1
+        for key in [k for k in self._cache if k[0] in doomed]:
+            self._cache.pop(key, None)
+        for key in [k for k in self._inflight if k[0] in doomed]:
+            self._inflight.pop(key, None)
 
     def clear(self) -> None:
+        self.invalidate_many(list({k[0] for k in self._cache} | set(self._running)))
         self._cache.clear()
 
-    async def _fetch_and_cache(
-        self, user_id: int, tenant_id: int | None
-    ) -> _CacheEntry:
-        existing = self._inflight.get(user_id)
+    async def _fetch_and_cache(self, key: _SubjectKey) -> _CacheEntry:
+        existing = self._inflight.get(key)
         if existing is not None:
             return await existing
 
+        user_id, tenant_id = key
         async with self._lock:
-            existing = self._inflight.get(user_id)
-            if existing is not None:
-                return await existing
-
-            task = asyncio.create_task(self._fetch(user_id, tenant_id))
-            self._inflight[user_id] = task
+            existing = self._inflight.get(key)
+            if existing is None:
+                epoch = self._epochs.get(user_id, 0)
+                task = asyncio.create_task(self._fetch(user_id, tenant_id))
+                self._inflight[key] = task
+                self._running[user_id] = self._running.get(user_id, 0) + 1
+        if existing is not None:
+            return await existing
 
         try:
             entry = await task
-            self._store(user_id, entry)
+            # Invalidated while in flight: the answer predates the change, so
+            # it serves the readers already waiting on it and is not cached.
+            if self._epochs.get(user_id, 0) == epoch:
+                self._store(key, entry)
             return entry
         finally:
-            self._inflight.pop(user_id, None)
+            # On success and on failure alike: a failed fetch is retried by the
+            # next caller rather than awaited forever. Only this fetch's own
+            # entry is removed; an invalidation may have put a fresh one there.
+            if self._inflight.get(key) is task:
+                self._inflight.pop(key, None)
+            remaining = self._running[user_id] - 1
+            if remaining:
+                self._running[user_id] = remaining
+            else:
+                del self._running[user_id]
+                self._epochs.pop(user_id, None)
 
     async def _fetch(self, user_id: int, tenant_id: int | None) -> _CacheEntry:
         started = time.perf_counter()
@@ -211,12 +255,13 @@ class PlatformPermsResolver:
             fetched_at=time.monotonic(),
         )
 
-    def _store(self, user_id: int, entry: _CacheEntry) -> None:
-        if len(self._cache) >= self._max_entries:
+    def _store(self, key: _SubjectKey, entry: _CacheEntry) -> None:
+        # max_entries counts subjects, (user, tenant) pairs, not users.
+        if key not in self._cache and len(self._cache) >= self._max_entries:
             # Drop the oldest entry (cheap LRU-ish eviction).
-            oldest_uid = min(self._cache, key=lambda uid: self._cache[uid].fetched_at)
-            self._cache.pop(oldest_uid, None)
-        self._cache[int(user_id)] = entry
+            oldest = min(self._cache, key=lambda k: self._cache[k].fetched_at)
+            self._cache.pop(oldest, None)
+        self._cache[key] = entry
 
     async def subscribe_invalidations(self, nats_client: NATSClient) -> None:
         """Subscribe to NATS invalidation subjects via the provided client."""
