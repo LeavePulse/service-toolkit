@@ -39,7 +39,28 @@ def test_grpc_client_builds_shared_channel_and_stub(
         "target": "auth-service:50000",
         "token": "secret",
         "service_name": None,
+        # A client hands off no verified user bearer unless it opts in.
+        "verified_bearer_handoff": False,
     }
+
+
+def test_grpc_client_passes_the_verified_bearer_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _build_shared_channel(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(grpc_client, "build_shared_channel", _build_shared_channel)
+    grpc_client.build_grpc_client(
+        key="test.auth",
+        target="auth-service:50000",
+        timeout_seconds=1.0,
+        verified_bearer_handoff=True,
+    )
+    assert captured["verified_bearer_handoff"] is True
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,7 @@ class GrpcClient:
         timeout_seconds: float,
         token: str | None = None,
         service_name: str | None = None,
+        verified_bearer_handoff: bool = False,
     ) -> None:
         timeout = float(timeout_seconds)
         if timeout <= 0:
@@ -47,6 +48,7 @@ class GrpcClient:
             target=self._target,
             token=self._token,
             service_name=service_name,
+            verified_bearer_handoff=verified_bearer_handoff,
         )
 
     @property
@@ -94,6 +96,7 @@ def build_grpc_client(
     timeout_seconds: float,
     token: str | None = None,
     service_name: str | None = None,
+    verified_bearer_handoff: bool = False,
 ) -> GrpcClient:
     return GrpcClient(
         key=key,
@@ -101,6 +104,7 @@ def build_grpc_client(
         timeout_seconds=timeout_seconds,
         token=token,
         service_name=service_name,
+        verified_bearer_handoff=verified_bearer_handoff,
     )
 
 

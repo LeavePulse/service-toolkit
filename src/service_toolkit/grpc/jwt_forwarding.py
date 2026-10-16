@@ -23,12 +23,25 @@ The forwarding-only path is intentionally separate from the existing
 ``x-internal-token`` interceptors: that token authenticates the *service*
 caller, while this JWT authenticates the *user* on whose behalf the call
 is made. Both are validated independently.
+
+- **Verified bearer handoff** (opt-in on both ends): a service that must call
+  one upstream *as the end user* (verification-service calling auth-service)
+  builds its server with ``retain_verified_bearer=True`` (or wraps its own
+  verified HTTP auth in :func:`verified_bearer_scope`) and builds exactly that
+  one client with ``verified_bearer_handoff=True``. The raw token is retained
+  only after the inbound verifier accepted it and only for the RPC or request
+  that verified it; every channel that did not opt in sends nothing from it.
+  This is deliberately not generic propagation: an inbound bearer is a bearer
+  secret, and the default for every server and channel is to drop it.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +63,10 @@ _CURRENT_JWT_PAYLOAD: ContextVar[JWTPayload | None] = ContextVar(
 )
 _CURRENT_ON_BEHALF: ContextVar[int | None] = ContextVar(
     "leavepulse_current_on_behalf", default=None
+)
+
+_VERIFIED_BEARER: ContextVar[VerifiedBearer | None] = ContextVar(
+    "leavepulse_verified_bearer", default=None
 )
 
 _AUTHORIZATION_HEADER = "authorization"
@@ -130,6 +147,115 @@ def user_id_from_payload(payload: JWTPayload | None) -> int:
         raise AuthRequiredError("Authentication required.") from exc
 
 
+#: RFC 6750 ``b64token``: what may follow ``Bearer `` in an authorization value.
+_B64TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*")
+
+
+class VerifiedBearer:
+    """A raw user JWT that an inbound verifier accepted, redacted everywhere.
+
+    The value is reachable only through :meth:`_reveal`, which this module's
+    handoff interceptor calls; ``repr``/``str`` never show it and it refuses
+    to be pickled, so it cannot reach a log line, an exception text or a
+    serialized payload by accident.
+    """
+
+    __slots__ = ("__value",)
+
+    def __init__(self, value: str) -> None:
+        if not _B64TOKEN.fullmatch(value):
+            # Never echo the value: it is a credential even when malformed.
+            msg = "a verified bearer must be a single RFC 6750 b64token"
+            raise ValueError(msg)
+        self.__value = value
+
+    def _reveal(self) -> str:
+        return self.__value
+
+    def __repr__(self) -> str:
+        return "VerifiedBearer(<redacted>)"
+
+    __str__ = __repr__
+
+    def __reduce__(self) -> Any:
+        msg = "a verified bearer cannot be serialized"
+        raise TypeError(msg)
+
+
+def verified_bearer_retained() -> bool:
+    """Whether a verified bearer is retained for the current RPC or request.
+
+    Diagnostic only: the token itself is never returned.
+    """
+    return _VERIFIED_BEARER.get() is not None
+
+
+@contextmanager
+def verified_bearer_scope(token: str) -> Iterator[None]:
+    """Retain a *verified* user JWT for one HTTP request (the HTTP-side opt-in).
+
+    Call it from the service's own auth middleware **after** its JWT verifier
+    accepted *token* (signature, ``typ``, ``iss``, ``aud`` and expiry, as RFC
+    8725 sections 3.1, 3.9 and 3.11 require:
+    https://www.rfc-editor.org/rfc/rfc8725.html), around the downstream
+    handling of that request only::
+
+        payload = await verifier.verify(raw)  # raises on anything it rejects
+        with verified_bearer_scope(raw):
+            return await handler(request)
+
+    Never pass a token the verifier did not accept. Only a channel built with
+    ``verified_bearer_handoff=True`` sends it; the receiving service verifies
+    it again. The previous value is restored when the block exits, also when
+    it raises. A malformed token is refused without echoing it.
+    """
+    held = VerifiedBearer(str(token).strip())
+    reset = _VERIFIED_BEARER.set(held)
+    try:
+        yield
+    finally:
+        _VERIFIED_BEARER.reset(reset)
+
+
+class VerifiedBearerHandoffClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
+    """Send the retained verified bearer, on the one channel that opted in.
+
+    Installed only by ``build_shared_channel(..., verified_bearer_handoff=True)``
+    (or by hand on a single channel); every other channel never reads the
+    retained bearer. It adds ``authorization: Bearer <jwt>`` to a fresh
+    metadata list (never the caller's own) when a bearer is retained and the
+    call carries no ``authorization`` yet; otherwise the call is untouched.
+    Unary-unary only: a streaming call on the channel sends nothing.
+
+    This only carries a token the inbound verifier accepted (RFC 8725 section
+    3.11 and 3.9: its ``typ`` and ``aud`` were checked there) to the receiving
+    service, which verifies it again with its own verifier; nothing here
+    weakens that check or interacts with the caller policy.
+    """
+
+    async def intercept_unary_unary(
+        self,
+        continuation: Callable[..., Awaitable[Any]],
+        client_call_details: grpc.aio.ClientCallDetails,
+        request: Any,
+    ) -> Any:
+        held = _VERIFIED_BEARER.get()
+        if held is None:
+            return await continuation(client_call_details, request)
+        metadata = _normalize_metadata(client_call_details.metadata)
+        if any(str(key).lower() == _AUTHORIZATION_HEADER for key, _ in metadata):
+            return await continuation(client_call_details, request)
+        metadata.append((_AUTHORIZATION_HEADER, f"Bearer {held._reveal()}"))  # noqa: SLF001
+        updated_details = grpc.aio.ClientCallDetails(
+            method=client_call_details.method,
+            timeout=client_call_details.timeout,
+            metadata=metadata,
+            credentials=client_call_details.credentials,
+            wait_for_ready=client_call_details.wait_for_ready,
+        )
+        return await continuation(updated_details, request)
+
+
 class JwtForwardingClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
     """Copy the task-local ``forwarded_jwt`` into outbound metadata.
 
@@ -183,10 +309,23 @@ class JwtContextServerInterceptor(grpc.aio.ServerInterceptor):
     that don't carry an ``authorization`` header pass through unchanged
     (anonymous access) — service-level enforcement is the caller's job
     via the existing ``InternalTokenInterceptor``.
+
+    *retain_verified_bearer* (default ``False``) additionally keeps the raw
+    token of a call whose JWT the verifier **accepted**, for that call only
+    (reset when the handler returns or raises), so the one client built with
+    ``verified_bearer_handoff=True`` can send it on. A rejected or absent
+    token is never retained. See :func:`verified_bearer_scope` for the RFC
+    8725 reasoning; streaming RPCs are passed through and retain nothing.
     """
 
-    def __init__(self, jwt_verifier: JWTVerifier[Any]) -> None:
+    def __init__(
+        self,
+        jwt_verifier: JWTVerifier[Any],
+        *,
+        retain_verified_bearer: bool = False,
+    ) -> None:
         self._verifier = jwt_verifier
+        self._retain_verified_bearer = bool(retain_verified_bearer)
 
     async def intercept_service(
         self,
@@ -202,12 +341,16 @@ class JwtContextServerInterceptor(grpc.aio.ServerInterceptor):
             return None
 
         verifier = self._verifier
-        return _wrap_handler_with_jwt_context(handler, verifier)
+        return _wrap_handler_with_jwt_context(
+            handler, verifier, retain_bearer=self._retain_verified_bearer
+        )
 
 
 def _wrap_handler_with_jwt_context(
     handler: grpc.RpcMethodHandler,
     verifier: JWTVerifier[Any],
+    *,
+    retain_bearer: bool = False,
 ) -> grpc.RpcMethodHandler:
     if not handler.unary_unary:
         # Streaming RPCs are not yet used by the BFF; passthrough.
@@ -216,20 +359,27 @@ def _wrap_handler_with_jwt_context(
     inner_unary_unary = handler.unary_unary
 
     async def _wrapped(request: Any, context: grpc.aio.ServicerContext) -> Any:
-        payload = await _verify_metadata_jwt(context, verifier)
+        verified = await _verify_metadata_jwt(context, verifier)
         token: Token[JWTPayload | None] | None = None
         behalf_token: Token[int | None] | None = None
-        if payload is not None:
-            token = _CURRENT_JWT_PAYLOAD.set(payload)
-            # On-behalf id is only honoured for authenticated bot callers; for
-            # anyone else the metadata is ignored so it cannot impersonate.
-            if bool(getattr(payload, "is_bot", False)):
-                on_behalf = _read_on_behalf(context.invocation_metadata())
-                if on_behalf is not None:
-                    behalf_token = _CURRENT_ON_BEHALF.set(on_behalf)
+        bearer_token: Token[VerifiedBearer | None] | None = None
         try:
+            if verified is not None:
+                payload, raw = verified
+                token = _CURRENT_JWT_PAYLOAD.set(payload)
+                # On-behalf id is only honoured for authenticated bot callers;
+                # for anyone else the metadata is ignored so it cannot
+                # impersonate.
+                if bool(getattr(payload, "is_bot", False)):
+                    on_behalf = _read_on_behalf(context.invocation_metadata())
+                    if on_behalf is not None:
+                        behalf_token = _CURRENT_ON_BEHALF.set(on_behalf)
+                if retain_bearer:
+                    bearer_token = _VERIFIED_BEARER.set(VerifiedBearer(raw))
             return await inner_unary_unary(request, context)
         finally:
+            if bearer_token is not None:
+                _VERIFIED_BEARER.reset(bearer_token)
             if behalf_token is not None:
                 _CURRENT_ON_BEHALF.reset(behalf_token)
             if token is not None:
@@ -245,7 +395,8 @@ def _wrap_handler_with_jwt_context(
 async def _verify_metadata_jwt(
     context: grpc.aio.ServicerContext,
     verifier: JWTVerifier[Any],
-) -> JWTPayload | None:
+) -> tuple[JWTPayload, str] | None:
+    """Return the accepted payload and the raw token it was decoded from."""
     auth_value = _read_authorization(context.invocation_metadata())
     if not auth_value:
         return None
@@ -261,13 +412,15 @@ async def _verify_metadata_jwt(
     try:
         payload = await verifier.verify(token)
     except Exception as exc:  # noqa: BLE001 — verifier-specific errors aren't typed
-        logger.warning("gRPC inbound JWT failed verification: %s", exc)
+        # A verifier may quote what it rejected; the token never reaches a log.
+        reason = str(exc).replace(token, "<redacted>") if token else str(exc)
+        logger.warning("gRPC inbound JWT failed verification: %s", reason)
         await context.abort(
             grpc.StatusCode.UNAUTHENTICATED,
             "invalid or expired authorization JWT",
         )
         return None  # unreachable — abort raises
-    return payload
+    return payload, token
 
 
 def _read_authorization(
@@ -307,6 +460,8 @@ def _normalize_metadata(
 __all__ = [
     "JwtContextServerInterceptor",
     "JwtForwardingClientInterceptor",
+    "VerifiedBearer",
+    "VerifiedBearerHandoffClientInterceptor",
     "current_jwt_payload",
     "current_on_behalf",
     "effective_user_id",
@@ -316,4 +471,6 @@ __all__ = [
     "reset_forwarded_on_behalf",
     "set_forwarded_jwt",
     "set_forwarded_on_behalf",
+    "verified_bearer_retained",
+    "verified_bearer_scope",
 ]

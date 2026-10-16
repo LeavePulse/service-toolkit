@@ -62,12 +62,14 @@ class _SharedChannelProxy(grpc.aio.Channel):
         token: str | None,
         service_name: str,
         options: list[tuple[str, int]],
+        verified_bearer_handoff: bool = False,
     ) -> None:
         self._key = key
         self._target = target
         self._token = token
         self._service_name = service_name
         self._options = tuple(options)
+        self._verified_bearer_handoff = verified_bearer_handoff
         self._lock = Lock()
         self._channels: WeakKeyDictionary[asyncio.AbstractEventLoop, grpc.aio.Channel] = (
             WeakKeyDictionary()
@@ -87,6 +89,13 @@ class _SharedChannelProxy(grpc.aio.Channel):
             # the current task — safe to enable unconditionally.
             JwtForwardingClientInterceptor(),
         ]
+        if self._verified_bearer_handoff:
+            # Opted in for this one target: sends the end user's verified
+            # inbound JWT, retained by the server or HTTP scope. No other
+            # channel installs it, so no other channel ever sends it.
+            from .jwt_forwarding import VerifiedBearerHandoffClientInterceptor
+
+            interceptors.append(VerifiedBearerHandoffClientInterceptor())
         if self._token is not None:
             from .interceptors import InternalTokenClientInterceptor
 
@@ -273,11 +282,19 @@ def build_shared_channel(
     target: str,
     token: str | None = None,
     service_name: str | None = None,
+    verified_bearer_handoff: bool = False,
 ) -> grpc.aio.Channel:
     """Return a process-wide shared async gRPC channel.
 
     If *token* is provided, it is sent as ``x-internal-token`` metadata
     via a call-credentials interceptor attached to the channel.
+
+    *verified_bearer_handoff* (default ``False``) makes this one channel send
+    the end user's verified inbound JWT, when the serving RPC retained it
+    (``retain_verified_bearer=True``) or the HTTP request is inside
+    ``verified_bearer_scope``. Enable it only on the client of the one
+    upstream that must act as that user; see
+    :class:`~service_toolkit.grpc.jwt_forwarding.VerifiedBearerHandoffClientInterceptor`.
     """
     normalized_key = str(key).strip()
     if not normalized_key:
@@ -293,7 +310,8 @@ def build_shared_channel(
     normalized_service_name = str(service_name or "").strip() or normalized_key.split(
         ".", maxsplit=1
     )[0].replace("_", "-")
-    spec = (normalized_target, normalized_token, normalized_service_name)
+    handoff = bool(verified_bearer_handoff)
+    spec = (normalized_target, normalized_token, normalized_service_name, handoff)
 
     with _CHANNEL_LOCK:
         existing = _SHARED_CHANNELS.get(normalized_key)
@@ -319,6 +337,7 @@ def build_shared_channel(
             token=normalized_token,
             service_name=normalized_service_name,
             options=options,
+            verified_bearer_handoff=handoff,
         )
 
         _SHARED_CHANNELS[normalized_key] = channel

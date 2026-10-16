@@ -19,6 +19,7 @@ __all__ = [
     "InternalTokenInterceptor",
     "JwtContextServerInterceptor",
     "JwtForwardingClientInterceptor",
+    "VerifiedBearerHandoffClientInterceptor",
     "abort_invalid",
     "abort_not_found",
     "apply_optional_fields",
@@ -57,6 +58,8 @@ __all__ = [
     "start_grpc_server",
     "stop_grpc_server",
     "translate_grpc_error",
+    "verified_bearer_retained",
+    "verified_bearer_scope",
 ]
 
 _EXPORT_MODULES = {
@@ -72,6 +75,9 @@ _EXPORT_MODULES = {
     "InternalTokenInterceptor": ".interceptors",
     "JwtContextServerInterceptor": ".jwt_forwarding",
     "JwtForwardingClientInterceptor": ".jwt_forwarding",
+    "VerifiedBearerHandoffClientInterceptor": ".jwt_forwarding",
+    "verified_bearer_retained": ".jwt_forwarding",
+    "verified_bearer_scope": ".jwt_forwarding",
     "abort_invalid": ".servicer",
     "abort_not_found": ".servicer",
     "apply_optional_fields": ".calls",

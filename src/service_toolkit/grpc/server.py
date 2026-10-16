@@ -192,6 +192,7 @@ def build_grpc_lifecycle(
     require_internal_token: bool = True,
     alternate_token_verifier: AlternateTokenVerifier | None = None,
     jwt_verifier: JWTVerifier[Any] | None = None,
+    retain_verified_bearer: bool = False,
     reflection_enabled: bool = True,
     service_names: Sequence[str] = (),
     registrars: Sequence[ServiceRegistrar] = (),
@@ -211,6 +212,11 @@ def build_grpc_lifecycle(
     which decodes the inbound ``authorization`` JWT and exposes it via the
     ``current_jwt_payload`` contextvar for servicers to consume with their
     existing permission helpers.
+
+    *retain_verified_bearer* (default ``False``, needs *jwt_verifier*) — also
+    keeps the raw JWT of each unary call the verifier accepted, for that call
+    only, so the single client built with ``verified_bearer_handoff=True`` can
+    act as the same user upstream. No other channel sends it.
 
     *require_internal_token* (default ``True``) — fail closed. Many servicers
     treat "no inbound JWT" as a trusted internal/admin caller, which is only
@@ -244,6 +250,13 @@ def build_grpc_lifecycle(
 
     Returns ``(startup, shutdown)`` async callables.
     """
+
+    if retain_verified_bearer and jwt_verifier is None:
+        msg = (
+            f"{service_name}: retain_verified_bearer needs a jwt_verifier; only "
+            "a token the inbound verifier accepted may be retained."
+        )
+        raise RuntimeError(msg)
 
     complete = caller_policy is not None and caller_policy.complete
     if complete and caller_policy is not None and not caller_policy.has_credentials:
@@ -283,7 +296,11 @@ def build_grpc_lifecycle(
         if jwt_verifier is not None:
             from .jwt_forwarding import JwtContextServerInterceptor
 
-            interceptors.append(JwtContextServerInterceptor(jwt_verifier))
+            interceptors.append(
+                JwtContextServerInterceptor(
+                    jwt_verifier, retain_verified_bearer=retain_verified_bearer
+                )
+            )
 
         # Innermost interceptor: convert awesome-errors domain exceptions raised
         # by a servicer into precise gRPC status codes so the metrics interceptor
