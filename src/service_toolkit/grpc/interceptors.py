@@ -9,7 +9,7 @@ from typing import Any
 
 import grpc
 
-from .authorization import CallerPolicy, authorize_listed, refusing
+from .authorization import CallerPolicy, authorize_listed, deny_unlisted, refusing
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,13 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
     into a policy. Without a platform token (a service started with
     ``require_internal_token=False``) those other methods are not gated, as
     before; a policy-listed method is gated either way.
+
+    A *complete* policy decides every method, and nothing else here applies:
+    an exempt service (health, reflection) passes, a listed method is decided
+    by its entry (the platform token is consulted only by an observing one),
+    and any other method is denied. It takes no exemption and no alternate
+    verifier, needs at least one caller credential, and refuses a platform
+    token that is also some caller's secret (the token would name a caller).
     """
 
     def __init__(
@@ -51,6 +58,19 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         if not token and policy is None:
             msg = "Internal token must not be empty."
             raise ValueError(msg)
+        if policy is not None and policy.complete:
+            if exempt_methods or alternate_verifier is not None:
+                msg = (
+                    "a complete caller policy decides every method: it takes no "
+                    "exempt_methods and no alternate_verifier"
+                )
+                raise ValueError(msg)
+            if not policy.has_credentials:
+                msg = "a complete caller policy has no caller credential"
+                raise ValueError(msg)
+            if token and policy.names_a_caller(token):
+                msg = "the platform token is also a caller's secret"
+                raise ValueError(msg)
         self._token = token or None
         self._policy = policy
         # Fully-qualified method names (e.g.
@@ -76,8 +96,15 @@ class InternalTokenInterceptor(grpc.aio.ServerInterceptor):
         # First, and final: a listed method never reaches the rules below.
         if self._policy is not None and self._policy.covers(method):
             return await authorize_listed(
-                self._policy, continuation, handler_call_details
+                self._policy,
+                continuation,
+                handler_call_details,
+                shared_token=self._token,
             )
+        if self._policy is not None and self._policy.complete:
+            if self._policy.exempt(method):
+                return await continuation(handler_call_details)
+            return await deny_unlisted(continuation, handler_call_details)
         if self._token is None:
             return await continuation(handler_call_details)
         # Allow health checks without auth

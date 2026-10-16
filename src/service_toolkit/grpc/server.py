@@ -236,10 +236,23 @@ def build_grpc_lifecycle(
     services' descriptors, after the registrars and before the port opens, and
     refuses to start otherwise.
 
+    A *complete* caller policy decides every served method (startup also
+    refuses a served method it does not list) and is enforced whatever
+    *require_internal_token* says: that flag only ever concerned the platform
+    token, and DEBUG must not open a port whose every method has its callers.
+    One without any caller credential refuses to build.
+
     Returns ``(startup, shutdown)`` async callables.
     """
 
-    if require_internal_token and not internal_token:
+    complete = caller_policy is not None and caller_policy.complete
+    if complete and caller_policy is not None and not caller_policy.has_credentials:
+        msg = (
+            f"{service_name}: the complete caller policy has no caller credential "
+            "configured (INTERNAL_CALLER_TOKENS), so it could admit no one."
+        )
+        raise RuntimeError(msg)
+    if require_internal_token and not internal_token and not complete:
         msg = (
             f"{service_name}: internal_token is required but not configured. "
             "Set INTERNAL_TOKEN (service-to-service auth) or pass "

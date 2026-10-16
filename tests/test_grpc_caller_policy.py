@@ -23,6 +23,7 @@ from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
 from service_toolkit.grpc.authorization import (
     CallerCredentials,
+    CallerIdentity,
     CallerPolicy,
     CallerPolicyError,
     Verdict,
@@ -75,8 +76,8 @@ def test_a_caller_name_is_a_lowercase_service_name(name: str) -> None:
 
 def test_a_presented_secret_names_exactly_one_caller() -> None:
     callers = _callers()
-    assert callers.resolve(CONTROL) == "control-service"
-    assert callers.resolve(NETWORK) == "network-service"
+    assert callers.resolve(CONTROL) == CallerIdentity("control-service")
+    assert callers.resolve(NETWORK) == CallerIdentity("network-service")
     for other in (None, "", PLATFORM, CONTROL + "x", CONTROL[:-1]):
         assert callers.resolve(other) is None
 
@@ -120,7 +121,7 @@ def test_the_decision() -> None:
     policy = _policy()
     method = "/pkg.Svc/Write"
     assert policy.decide(method, CONTROL).verdict is Verdict.ADMIT
-    assert policy.decide(method, CONTROL).caller == "control-service"
+    assert policy.decide(method, CONTROL).caller == CallerIdentity("control-service")
     assert policy.decide(method, NETWORK).verdict is Verdict.PERMISSION_DENIED
     for refused in (None, "", "garbage", PLATFORM):
         assert policy.decide(method, refused).verdict is Verdict.UNAUTHENTICATED
@@ -267,7 +268,7 @@ def test_a_refusal_and_an_admission_keep_the_handlers_kind(
     handler = factory(behaviour, request_deserializer=bytes, response_serializer=bytes)
     for made in (
         refusing(handler, grpc.StatusCode.PERMISSION_DENIED, "no"),
-        as_caller(handler, "control-service"),
+        as_caller(handler, CallerIdentity("control-service")),
     ):
         assert made.request_streaming is request_streaming
         assert made.response_streaming is response_streaming
@@ -277,7 +278,7 @@ def test_a_refusal_and_an_admission_keep_the_handlers_kind(
 
 @pytest.mark.asyncio
 async def test_concurrent_calls_each_see_only_their_own_caller() -> None:
-    seen: dict[str, list[str | None]] = {}
+    seen: dict[str, list[CallerIdentity | None]] = {}
 
     async def unary(request: str, _context: object) -> None:
         for _ in range(5):
@@ -290,9 +291,11 @@ async def test_concurrent_calls_each_see_only_their_own_caller() -> None:
             yield request
             await asyncio.sleep(0)
 
-    one = as_caller(grpc.unary_unary_rpc_method_handler(unary), "control-service")
-    two = as_caller(grpc.unary_unary_rpc_method_handler(unary), "network-service")
-    three = as_caller(grpc.unary_stream_rpc_method_handler(stream), "network-service")
+    control = CallerIdentity("control-service")
+    network = CallerIdentity("network-service")
+    one = as_caller(grpc.unary_unary_rpc_method_handler(unary), control)
+    two = as_caller(grpc.unary_unary_rpc_method_handler(unary), network)
+    three = as_caller(grpc.unary_stream_rpc_method_handler(stream), network)
 
     async def drain() -> None:
         async for _ in three.unary_stream("c", None):
@@ -301,9 +304,9 @@ async def test_concurrent_calls_each_see_only_their_own_caller() -> None:
     await asyncio.gather(
         one.unary_unary("a", None), two.unary_unary("b", None), drain()
     )
-    assert set(seen["a"]) == {"control-service"}
-    assert set(seen["b"]) == {"network-service"}
-    assert set(seen["c"]) == {"network-service"}
+    assert set(seen["a"]) == {control}
+    assert set(seen["b"]) == {network}
+    assert set(seen["c"]) == {network}
     assert current_caller.get() is None
 
 
@@ -312,7 +315,9 @@ async def test_the_label_is_reset_when_the_handler_fails() -> None:
     async def fails(_r: object, _c: object) -> None:
         raise RuntimeError("boom")
 
-    wrapped = as_caller(grpc.unary_unary_rpc_method_handler(fails), "control-service")
+    wrapped = as_caller(
+        grpc.unary_unary_rpc_method_handler(fails), CallerIdentity("control-service")
+    )
     with pytest.raises(RuntimeError):
         await wrapped.unary_unary(None, None)
     assert current_caller.get() is None
@@ -363,7 +368,8 @@ _SERVED: list[str] = []
 
 
 def _label() -> str:
-    label = current_caller.get() or "<none>"
+    caller = current_caller.get()
+    label = caller.name if caller else "<none>"
     _SERVED.append(label)
     return label
 
@@ -610,7 +616,7 @@ def test_caller_secrets_load_from_the_environment() -> None:
         env_file=None,
     )
     callers = CallerCredentials(settings.caller_tokens)
-    assert callers.resolve("s1") == "control-service"
+    assert callers.resolve("s1") == CallerIdentity("control-service")
     assert (
         InternalSettings.load(prefix="INTERNAL_", env={}, env_file=None).caller_tokens
         == {}
