@@ -328,3 +328,45 @@ def test_the_block_knows_whether_an_address_was_given() -> None:
     assert not RedisCoordinationSettings(enabled=True).configured
     assert RedisCoordinationSettings(url="redis://x").configured
     assert RedisCoordinationSettings(host="redis").configured
+
+
+class FlakyRedis(FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def eval(
+        self, script: str, num_keys: int, key: str, token: str, *args: str
+    ) -> int:
+        if self.down:
+            raise ConnectionError("redis is unreachable")
+        return await super().eval(script, num_keys, key, token, *args)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_renewal_is_a_lost_lease_not_an_exception() -> None:
+    """A renewal that cannot reach Redis must end the lease quietly. Raising
+    from `wait_lost` and then from `release` used to kill the caller's
+    supervisor loop, so every leader task stopped until the process restarted."""
+    client = FlakyRedis()
+    calls: list[str] = []
+
+    async def on_lost() -> None:
+        calls.append("lost")
+
+    lease = LeaderLease(
+        client,
+        "locks:flaky",
+        ttl_seconds=0.1,
+        renew_interval_seconds=0.05,
+        on_lost=on_lost,
+    )
+    assert await lease.acquire() is True
+    client.down = True
+
+    await asyncio.wait_for(lease.wait_lost(), timeout=1)
+    await asyncio.sleep(0)
+    assert lease.held is False
+    assert calls == ["lost"]
+
+    await lease.release()

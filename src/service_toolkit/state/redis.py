@@ -477,7 +477,16 @@ class LeaderLease:
             except asyncio.CancelledError:  # pragma: no cover - expected
                 pass
 
-        await self._lock.release()
+        try:
+            await self._lock.release()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "LeaderLease release failed for %s; the key expires by its TTL",
+                self._lock.key,
+                exc_info=True,
+            )
 
     async def wait_lost(self) -> None:
         task = self._task
@@ -492,7 +501,17 @@ class LeaderLease:
         try:
             while True:
                 await asyncio.sleep(self._renew_interval)
-                ok = await self._lock.extend(ttl_seconds=self._ttl_seconds)
+                try:
+                    ok = await self._lock.extend(ttl_seconds=self._ttl_seconds)
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "LeaderLease renewal failed for %s; treating the lease as lost",
+                        self._lock.key,
+                        exc_info=True,
+                    )
+                    ok = False
                 if ok:
                     continue
                 self._lost.set()
