@@ -277,10 +277,6 @@ class SqlProblemStore:
             await session.execute(insert(self._t).values(**_transition_values(row)))
             return problem
 
-    async def seen(self, transition_id: str) -> bool:
-        async with self._begin() as session:
-            return await self._seen(session, transition_id)
-
     async def get_open(self, kind: str, subject_id: str) -> Problem | None:
         async with self._begin() as session:
             result = await session.execute(

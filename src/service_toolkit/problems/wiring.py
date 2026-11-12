@@ -40,18 +40,6 @@ def _at(moment: float) -> datetime:
     return datetime.fromtimestamp(moment, UTC)
 
 
-async def _fresh_id(store: ProblemStore, transition_id: str, moment: float) -> str:
-    """``transition_id``, or a variant of it when an earlier problem already used it.
-
-    Reactive numbers crossings per entity from 1 and starts again when its
-    store is lost, so an id can return for a different crossing. Callers ask
-    only after ruling out a re-delivery, so a known id here means reuse.
-    """
-    if await store.seen(transition_id):
-        return f"{transition_id}@{int(moment * 1000)}"
-    return transition_id
-
-
 async def _unread(entity: EntityRef) -> Any:
     # The store compares details itself; UNKNOWN makes the engine call apply
     # at every evaluation, which is what stamps last_probe.
@@ -64,10 +52,7 @@ def _rules(reactor: Reactor, kind: ProblemKind, store: ProblemStore) -> tuple[Ed
         if record is not None and record.holds is False:
             # A later exit is queued behind this enter; the pair nets to nothing.
             return
-        transition_id = t.id
-        if await store.get_open(kind.kind, entity.id) is None:
-            transition_id = await _fresh_id(store, t.id, t.at)
-        problem = await store.open(kind.kind, entity.kind, entity.id, kind.details(facts), _at(t.at), transition_id)
+        problem = await store.open(kind.kind, entity.kind, entity.id, kind.details(facts), _at(t.at), t.id)
         if problem is not None:
             log.info("problem_open kind=%s subject=%s problem=%s transition=%s", kind.kind, str(entity), problem.id, t.id)
 
@@ -78,8 +63,7 @@ def _rules(reactor: Reactor, kind: ProblemKind, store: ProblemStore) -> tuple[Ed
             return
         if await store.get_open(kind.kind, entity.id) is None:
             return
-        transition_id = await _fresh_id(store, t.id, t.at)
-        problem = await store.resolve(kind.kind, entity.id, _at(t.at), transition_id)
+        problem = await store.resolve(kind.kind, entity.id, _at(t.at), t.id)
         if problem is not None:
             log.info("problem_resolved kind=%s subject=%s problem=%s transition=%s", kind.kind, str(entity), problem.id, t.id)
 

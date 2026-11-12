@@ -46,6 +46,11 @@ class Record(msgspec.Struct):
     since: float = 0.0
     # Bumps on every enter; part of the transition id.
     epoch: int = 0
+    # A random token made when the record is first written, also part of the
+    # transition id: epochs start again at 1 after the store is lost or the
+    # entity left, and the token keeps those ids from meeting earlier ones.
+    # None in a record written before it existed; filled on the next write.
+    generation: str | None = None
     # The newest facts version applied; older views are dropped.
     version: int | None = None
     # held_for: when the inner requirement started holding, and when data went

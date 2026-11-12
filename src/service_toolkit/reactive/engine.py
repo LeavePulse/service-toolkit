@@ -76,6 +76,18 @@ def _key(rule: str, entity: EntityRef) -> str:
     return f"{rule}|{entity}"
 
 
+def _new_record(stored: Record | None) -> Record:
+    record = stored or Record()
+    if record.generation is None:
+        record.generation = secrets.token_hex(4)
+    return record
+
+
+def _transition_id(rule: str, entity: EntityRef, record: Record, kind: str) -> str:
+    """``<rule>:<entity>:<generation>-<epoch>:<kind>``, e.g. ``stay:member:42:9f3a1c07-3:enter``."""
+    return f"{rule}:{entity}:{record.generation}-{record.epoch}:{kind}"
+
+
 def _split(key: str) -> tuple[str, EntityRef]:
     rule, _, ref = key.partition("|")
     kind, _, ident = ref.partition(":")
@@ -258,7 +270,7 @@ class Reactor:
         if stored is not None and facts.version is not None and stored.version is not None and facts.version < stored.version:
             log.debug("reactive_stale_facts rule=%s entity=%s", rule.name, str(entity))
             return
-        record = stored or Record()
+        record = _new_record(stored)
         truth, due = self._truth(rule.requirement, facts, record, now)
         if facts.version is not None:
             record.version = facts.version
@@ -301,6 +313,7 @@ class Reactor:
 
     async def _commit(self, rule: EdgeRule, facts: Facts, record: Record, holds: bool, now: float) -> None:
         entity = facts.entity
+        record = _new_record(record)
         record.holds = holds
         record.since = now
         record.candidate = None
@@ -318,7 +331,7 @@ class Reactor:
         if handler is None:
             await self.store.put(rule.name, str(entity), record)
             return
-        transition = Transition(f"{rule.name}:{entity}:{record.epoch}:{kind}", rule.name, entity, kind, record.epoch, now)
+        transition = Transition(_transition_id(rule.name, entity, record, kind), rule.name, entity, kind, record.epoch, now)
         # Written down before it runs: a crash in between retries it with the
         # same id instead of forgetting it.
         record.pending = (*record.pending, PendingEffect(transition.id, kind))
@@ -331,7 +344,7 @@ class Reactor:
         entity = facts.entity
         record.repeats += 1
         record.next_repeat = now + rule.repeat
-        effect_id = f"{rule.name}:{entity}:{record.epoch}:enter:r{record.repeats}"
+        effect_id = f"{_transition_id(rule.name, entity, record, 'enter')}:r{record.repeats}"
         record.pending = (*record.pending, PendingEffect(effect_id, "enter"))
         await self.store.put(rule.name, str(entity), record)
         await self.timers.schedule(_key(rule.name, entity), record.next_repeat)
@@ -365,7 +378,7 @@ class Reactor:
         stored = await self.store.get(rule.name, str(entity))
         if stored is not None and facts.version is not None and stored.version is not None and facts.version < stored.version:
             return
-        record = stored or Record()
+        record = _new_record(stored)
         if facts.version is not None:
             record.version = facts.version
         desired = rule.desired(facts)

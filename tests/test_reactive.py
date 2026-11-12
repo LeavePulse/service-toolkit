@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -16,6 +17,7 @@ from service_toolkit.reactive import (
     MemoryStore,
     MemoryTimers,
     Reactor,
+    Record,
     Transition,
     held_for,
     latch,
@@ -113,7 +115,7 @@ async def test_first_evaluation_is_silent_then_transitions_fire() -> None:
     await reactor.changed(facts("2", voice="a", roles={"staff"}), fields={"roles"})
     await reactor.changed(facts("2", voice=None, roles={"staff"}), fields={"voice"})
     assert [k for k, _ in seen] == ["enter", "exit"]
-    assert seen[0][1] == "entered:member:2:1:enter"
+    assert re.fullmatch(r"entered:member:2:[0-9a-f]{8}-1:enter", seen[0][1])
 
 
 @pytest.mark.asyncio
@@ -560,7 +562,8 @@ async def test_repeat_is_a_heartbeat_while_it_holds() -> None:
     await reactor.run_timers()
     clock.now += 3600
     await reactor.run_timers()
-    assert beats == ["touch:member:1:1:enter", "touch:member:1:1:enter:r1"]
+    assert re.fullmatch(r"touch:member:1:[0-9a-f]{8}-1:enter", beats[0])
+    assert beats[1] == f"{beats[0]}:r1"
     members.data["1"] = {"occupied": False}
     await reactor.changed(facts("1", occupied=False))
     clock.now += 7200
@@ -680,3 +683,37 @@ async def test_on_reconciled_runs_after_each_reconcile_and_survives_a_failure() 
     cancel()
     await reactor.reconcile()
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_transition_ids_do_not_repeat_after_the_store_is_lost() -> None:
+    reactor, _, _ = make()
+    ids: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        ids.append(t.id)
+
+    for _ in range(2):
+        await reactor.changed(facts("1", voice=None))
+        await reactor.changed(facts("1", voice="a"))
+        reactor.store = MemoryStore()
+    # Both were the first enter of a fresh record; the generation tells them apart.
+    assert len(ids) == 2 and ids[0] != ids[1]
+    assert ids[0].rsplit("-", 1)[1] == ids[1].rsplit("-", 1)[1] == "1:enter"
+
+
+@pytest.mark.asyncio
+async def test_a_record_from_before_generations_gets_one_and_keeps_it() -> None:
+    reactor, _, _ = make()
+    ids: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        ids.append(t.id)
+
+    await reactor.store.put("joined", "member:1", Record(holds=False, since=1.0, epoch=4))
+    await reactor.changed(facts("1", voice="a"))
+    record = await reactor.store.get("joined", "member:1")
+    assert record is not None and record.generation is not None
+    assert ids == [f"joined:member:1:{record.generation}-5:enter"]

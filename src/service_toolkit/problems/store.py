@@ -51,9 +51,6 @@ class ProblemStore(Protocol):
     async def resolve(self, kind: str, subject_id: str, at: datetime, transition_id: str) -> Problem | None:
         """Resolve the open problem. None when nothing is open or the id was already recorded."""
 
-    async def seen(self, transition_id: str) -> bool:
-        """Whether a transition with this id is recorded."""
-
     async def get_open(self, kind: str, subject_id: str) -> Problem | None: ...
 
     async def open_problems(
@@ -201,9 +198,6 @@ class MemoryProblemStore:
         before = self._last_state(problem.id)
         self._append(transition(self._ids(), problem, at, before, "resolved", {}, transition_id))
         return problem
-
-    async def seen(self, transition_id: str) -> bool:
-        return transition_id in self._seen
 
     async def get_open(self, kind: str, subject_id: str) -> Problem | None:
         problem_id = self._open.get((kind, subject_id))

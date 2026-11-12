@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -245,7 +246,7 @@ async def test_opens_after_hold_updates_and_resolves(store: ProblemStore) -> Non
     assert resolved.resolved_at == ts(clock.now)
     assert [(r.from_state, r.to_state) for r in rows] == [(None, "open"), ("open", "updated"), ("updated", "resolved")]
     assert rows[1].changes == {"severity": "critical"}
-    assert rows[0].transition_id == "problem:RoadHomeMissing:host:a:1:enter"
+    assert re.fullmatch(r"problem:RoadHomeMissing:host:a:[0-9a-f]{8}-1:enter", rows[0].transition_id)
 
 
 @pytest.mark.asyncio
@@ -352,19 +353,17 @@ async def test_reconcile_opens_what_holds_but_is_missing(store: ProblemStore) ->
 
 
 @pytest.mark.asyncio
-async def test_an_id_reused_after_a_store_loss_opens_a_new_problem(store: ProblemStore) -> None:
+async def test_an_enter_after_a_store_loss_opens_a_new_problem(store: ProblemStore) -> None:
     reactor, feed, _ = world(store, road_home())
     await feed.push({"a": {"road_home": False}})
     await feed.push({"a": {"road_home": True}})
     reactor.store = MemoryStore()
-    # Epochs start again at 1, so this enter carries the first one's id.
+    # Epochs start again at 1; the record's new generation keeps the id fresh.
     await feed.push({"a": {"road_home": False}})
     [problem] = await store.open_problems()
-    found = await store.problem(problem.id)
-    assert found is not None
-    assert found[1][0].transition_id.startswith("problem:RoadHomeMissing:host:a:1:enter@")
     events = await store.recent()
     assert len({e.transition.problem_id for e in events}) == 2
+    assert len({e.transition.transition_id for e in events}) == len(events)
 
 
 @pytest.mark.asyncio
