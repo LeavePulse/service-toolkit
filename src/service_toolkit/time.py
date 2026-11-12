@@ -6,9 +6,16 @@ services (naive-UTC normalisation in particular).
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
-__all__ = ["to_naive_utc"]
+__all__ = ["to_naive_utc", "unix_now"]
+
+
+def unix_now() -> float:
+    """Seconds since the epoch. The default clock wherever one is injectable,
+    so code that waits on time can be tested with a fake one instead of sleeping."""
+    return time.time()
 
 
 def to_naive_utc(value: datetime) -> datetime:

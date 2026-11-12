@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
+
+import pytest
+
+from service_toolkit.reactive import (
+    UNKNOWN,
+    EntityRef,
+    Facts,
+    Fields,
+    MemoryStore,
+    MemoryTimers,
+    Reactor,
+    Transition,
+    held_for,
+    latch,
+)
+
+F = Fields()
+M = "member"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Members:
+    """A provider over a dict, with an optional join: rooms feed member facts."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, dict[str, Any]] = {}
+        self.is_ready = True
+        self.joins: dict[str, list[str]] = {}
+
+    def ref(self, ident: str) -> EntityRef:
+        return EntityRef(M, ident)
+
+    async def facts(self, entity: EntityRef) -> Facts | None:
+        row = self.data.get(entity.id)
+        return None if row is None else Facts(entity, row)
+
+    async def entities(self) -> list[EntityRef]:
+        return [self.ref(i) for i in self.data]
+
+    def ready(self) -> bool:
+        return self.is_ready
+
+    def dependents(self, entity: EntityRef, fields: frozenset[str]) -> Iterable[tuple[EntityRef, frozenset[str]]]:
+        return [(self.ref(i), frozenset({"own_rooms"})) for i in self.joins.get(str(entity), [])]
+
+
+def make(**kwargs: Any) -> tuple[Reactor, Members, Clock]:
+    clock = Clock()
+    reactor = Reactor(store=MemoryStore(), timers=MemoryTimers(), clock=clock, jitter=0, reconcile_rate=0, **kwargs)
+    members = Members()
+    reactor.provide(M, members)
+    return reactor, members, clock
+
+
+def facts(ident: str, version: int | None = None, **fields: Any) -> Facts:
+    return Facts(EntityRef(M, ident), fields, version)
+
+
+in_voice_staff = F.voice.present() & F.roles.contains("staff")
+
+
+def test_three_valued_logic_and_explain() -> None:
+    f = facts("1", voice="general")
+    assert in_voice_staff.evaluate(f) is UNKNOWN
+    assert (F.voice.present() | F.roles.contains("staff")).evaluate(f) is True
+    assert (~F.roles.contains("staff")).evaluate(f) is UNKNOWN
+    assert (F.voice.eq("other") & F.roles.contains("staff")).evaluate(f) is False
+    text = in_voice_staff.explain(f).render()
+    assert "roles contains 'staff' -> UNKNOWN" in text
+    assert in_voice_staff.fields() == {"voice", "roles"}
+
+
+def test_unknown_has_no_truth_value() -> None:
+    with pytest.raises(TypeError):
+        bool(UNKNOWN)
+
+
+@pytest.mark.asyncio
+async def test_first_evaluation_is_silent_then_transitions_fire() -> None:
+    reactor, _, _ = make()
+    seen: list[tuple[str, str]] = []
+
+    @reactor.on_enter(in_voice_staff, kind=M)
+    async def entered(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(("enter", t.id))
+
+    @reactor.on_exit(in_voice_staff, kind=M)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(("exit", t.id))
+
+    # Already matching when first seen: recorded, not fired.
+    await reactor.changed(facts("1", voice="a", roles={"staff"}))
+    assert seen == []
+    # Joined voice without the role, got the role later: that is the enter.
+    await reactor.changed(facts("2", voice="a", roles=set()))
+    await reactor.changed(facts("2", voice="a", roles={"staff"}), fields={"roles"})
+    await reactor.changed(facts("2", voice=None, roles={"staff"}), fields={"voice"})
+    assert [k for k, _ in seen] == ["enter", "exit"]
+    assert seen[0][1] == "entered:member:2:1:enter"
+
+
+@pytest.mark.asyncio
+async def test_unknown_changes_nothing() -> None:
+    reactor, _, _ = make()
+    exits: list[str] = []
+
+    @reactor.on_exit(in_voice_staff, kind=M)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        exits.append(t.id)
+
+    await reactor.changed(facts("1", voice="a", roles={"staff"}))
+    await reactor.changed(facts("1", voice="a"))  # roles missing: UNKNOWN
+    assert exits == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_field_does_not_wake_the_rule() -> None:
+    reactor, _, _ = make()
+    calls = 0
+
+    async def observe(entity: EntityRef) -> Any:
+        nonlocal calls
+        calls += 1
+        return True
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe)
+    async def apply(entity: EntityRef, desired: Any) -> None:
+        pass
+
+    await reactor.changed(facts("1", voice="a", nick="x"), fields={"nick"})
+    assert calls == 0
+    await reactor.changed(facts("1", voice="a", nick="x"), fields={"voice"})
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_held_for_waits_and_pauses_while_unknown() -> None:
+    reactor, members, clock = make()
+    entered: list[str] = []
+
+    @reactor.on_enter(held_for(F.voice.present(), minutes=5), kind=M)
+    async def stayed(entity: EntityRef, f: Facts, t: Transition) -> None:
+        entered.append(t.id)
+
+    members.data["1"] = {"voice": None}
+    await reactor.changed(facts("1", voice=None))  # silent baseline: not holding
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 120
+    members.data["1"] = {}  # data missing for two minutes: the clock pauses
+    await reactor.changed(facts("1"))
+    clock.now += 120
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 170  # 290 s counted
+    await reactor.run_timers()
+    assert entered == []
+    clock.now += 20  # 310 s counted
+    await reactor.run_timers()
+    assert len(entered) == 1
+
+
+@pytest.mark.asyncio
+async def test_settle_absorbs_a_flap() -> None:
+    reactor, members, clock = make()
+    exits: list[str] = []
+
+    @reactor.on_exit(F.voice.present(), kind=M, settle=3)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        exits.append(t.id)
+
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    # A move between channels: out, then in again a moment later.
+    await reactor.changed(facts("1", voice=None))
+    clock.now += 1
+    await reactor.changed(facts("1", voice="b"))
+    clock.now += 5
+    members.data["1"] = {"voice": "b"}
+    await reactor.run_timers()
+    assert exits == []
+    # A real leave commits once it has held for the settle time.
+    members.data["1"] = {"voice": None}
+    await reactor.changed(facts("1", voice=None))
+    clock.now += 4
+    await reactor.run_timers()
+    assert len(exits) == 1
+
+
+@pytest.mark.asyncio
+async def test_latch_uses_different_conditions_in_and_out() -> None:
+    reactor, _, _ = make()
+    log: list[str] = []
+    rule = latch(enter=F.dead_rounds.ge(2), exit=F.live_rounds.ge(8))
+
+    @reactor.on_enter(rule, kind=M)
+    async def failed_over(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append("over")
+
+    @reactor.on_exit(rule, kind=M)
+    async def restored(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append("back")
+
+    await reactor.changed(facts("1", dead_rounds=0, live_rounds=10))
+    await reactor.changed(facts("1", dead_rounds=2, live_rounds=0))
+    await reactor.changed(facts("1", dead_rounds=0, live_rounds=3))  # healthy-looking, not proven
+    assert log == ["over"]
+    await reactor.changed(facts("1", dead_rounds=0, live_rounds=8))
+    assert log == ["over", "back"]
+
+
+@pytest.mark.asyncio
+async def test_older_version_is_dropped() -> None:
+    reactor, _, _ = make()
+    entered: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        entered.append(t.id)
+
+    await reactor.changed(facts("1", version=5, voice=None))
+    await reactor.changed(facts("1", version=4, voice="a"))  # late replay
+    assert entered == []
+    await reactor.changed(facts("1", version=6, voice="a"))
+    assert len(entered) == 1
+
+
+@pytest.mark.asyncio
+async def test_converge_reads_back_and_retries_a_mismatch() -> None:
+    reactor, members, clock = make()
+    world: dict[str, bool] = {}
+    broken = True
+
+    async def observe(entity: EntityRef) -> Any:
+        return world.get(entity.id, False)
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe)
+    async def apply(entity: EntityRef, desired: Any) -> None:
+        if not broken:  # the call "succeeds" but changes nothing
+            world[entity.id] = desired
+
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    assert world == {}
+    broken = False
+    clock.now += 10
+    await reactor.run_timers()
+    assert world == {"1": True}
+
+
+@pytest.mark.asyncio
+async def test_converge_compares_with_the_target_not_with_what_was_sent() -> None:
+    reactor, _, _ = make()
+    world: dict[str, bool] = {}
+    applied = 0
+
+    async def observe(entity: EntityRef) -> Any:
+        return world.get(entity.id, False)
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe)
+    async def apply(entity: EntityRef, desired: Any) -> None:
+        nonlocal applied
+        applied += 1
+        world[entity.id] = desired
+
+    await reactor.changed(facts("1", voice="a"))
+    await reactor.changed(facts("1", voice="a"))
+    assert applied == 1
+    world.clear()  # the target restarted and lost it
+    await reactor.changed(facts("1", voice="a"))
+    assert applied == 2
+
+
+@pytest.mark.asyncio
+async def test_shadow_and_switch_act_on_nothing() -> None:
+    off = {"switched"}
+    reactor, _, _ = make(enabled=lambda name: name not in off)
+    calls: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return False
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe, mode="shadow")
+    async def shadowed(entity: EntityRef, desired: Any) -> None:
+        calls.append("shadow")
+
+    @reactor.on_enter(F.voice.present(), kind=M, name="switched")
+    async def switched(entity: EntityRef, f: Facts, t: Transition) -> None:
+        calls.append("switched")
+
+    await reactor.changed(facts("1", voice=None))
+    await reactor.changed(facts("1", voice="a"))
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_one_owner_per_resource_key() -> None:
+    reactor, _, _ = make()
+    applied: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return False
+
+    for name in ("first", "second"):
+
+        async def apply(entity: EntityRef, desired: Any, name: str = name) -> None:
+            applied.append(name)
+
+        reactor.converge(F.voice.present(), kind=M, observe=observe, name=name, owns=lambda e: [f"role:{e.id}"], verify=False)(apply)
+
+    await reactor.changed(facts("1", voice="a"))
+    assert applied == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_failed_effect_is_retried_with_the_same_id() -> None:
+    reactor, members, clock = make()
+    attempts: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        attempts.append(t.id)
+        if len(attempts) == 1:
+            raise RuntimeError("discord said no")
+
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice=None))
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 10
+    await reactor.run_timers()
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    clock.now += 1000
+    await reactor.run_timers()
+    assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_converge_runs_before_enter_in_one_change() -> None:
+    reactor, _, _ = make()
+    order: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return False
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def announce(entity: EntityRef, f: Facts, t: Transition) -> None:
+        order.append("enter")
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe, verify=False)
+    async def grant(entity: EntityRef, desired: Any) -> None:
+        order.append("converge")
+
+    await reactor.changed(facts("1", voice=None))
+    order.clear()
+    await reactor.changed(facts("1", voice="a"))
+    assert order == ["converge", "enter"]
+
+
+@pytest.mark.asyncio
+async def test_follower_does_nothing() -> None:
+    leader = False
+    reactor, _, _ = make(is_leader=lambda: leader)
+    seen: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M, initial="fire")
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(t.id)
+
+    await reactor.changed(facts("1", voice="a"))
+    assert seen == []
+    assert await reactor.store.get("joined", "member:1") is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_catches_missed_changes_and_departures() -> None:
+    reactor, members, _ = make()
+    log: list[str] = []
+    withdrawn: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return UNKNOWN
+
+    async def withdraw(entity: EntityRef) -> None:
+        withdrawn.append(entity.id)
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe, withdraw=withdraw, verify=False)
+    async def grant(entity: EntityRef, desired: Any) -> None:
+        pass
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append(f"enter {entity.id}")
+
+    @reactor.on_exit(F.voice.present(), kind=M)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append(f"exit {entity.id}")
+
+    members.data = {"1": {"voice": None}, "2": {"voice": "a"}}
+    await reactor.reconcile()  # baseline, silent
+    assert log == []
+    # While nobody was listening: 1 joined, 2 left the server.
+    members.data = {"1": {"voice": "a"}}
+    await reactor.reconcile()
+    assert sorted(log) == ["enter 1", "exit 2"]
+    assert withdrawn == ["2"]
+    # A restart with the store intact replays nothing.
+    log.clear()
+    await reactor.reconcile()
+    assert log == []
+
+
+@pytest.mark.asyncio
+async def test_retiring_a_rule_withdraws_what_it_holds() -> None:
+    reactor, members, _ = make()
+    withdrawn: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return True
+
+    async def withdraw(entity: EntityRef) -> None:
+        withdrawn.append(entity.id)
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe, withdraw=withdraw, name="access")
+    async def grant(entity: EntityRef, desired: Any) -> None:
+        pass
+
+    await reactor.changed(facts("1", voice="a"))
+    await reactor.retire("access")
+    assert withdrawn == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_a_joined_fact_wakes_its_dependents() -> None:
+    reactor, members, _ = make()
+    entered: list[str] = []
+    in_own_room = F.voice.matches(lambda ch, f: ch in f["own_rooms"], reads=["own_rooms"])
+
+    @reactor.on_enter(in_own_room, kind=M)
+    async def at_home(entity: EntityRef, f: Facts, t: Transition) -> None:
+        entered.append(entity.id)
+
+    members.data["1"] = {"voice": "r1", "own_rooms": set()}
+    await reactor.changed(facts("1", voice="r1", own_rooms=set()))
+    # The room changes owner; the member's own facts did not change, the join did.
+    members.joins["member:room-r1"] = ["1"]
+    members.data["1"] = {"voice": "r1", "own_rooms": {"r1"}}
+    await reactor.changed(Facts(EntityRef(M, "room-r1"), {"owner": "1"}), fields={"owner"})
+    assert entered == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_explain_names_what_was_read() -> None:
+    reactor, members, _ = make()
+
+    @reactor.on_enter(in_voice_staff, kind=M, name="staff_voice")
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        pass
+
+    members.data["1"] = {"voice": "a", "roles": set()}
+    explained = await reactor.explain("staff_voice", EntityRef(M, "1"))
+    assert explained is not None
+    assert explained.value is False
+    assert "roles contains 'staff' -> False" in explained.render()
