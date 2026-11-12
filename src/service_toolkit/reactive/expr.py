@@ -257,13 +257,21 @@ class Fields:
 
 @dataclass(frozen=True, slots=True)
 class HeldFor:
-    """True once ``inner`` has held, without a break, for ``seconds``."""
+    """True once ``inner`` has held, without a break, for ``seconds``.
+
+    ``seconds`` may be a callable, resolved at every evaluation like the values
+    of a check: a duration from config follows a reload. A run already timed
+    is looked at again when its old due time comes, or sooner on any change.
+    """
 
     inner: Expr
-    seconds: float
+    seconds: float | Callable[[], float]
 
     def fields(self) -> frozenset[str]:
         return self.inner.fields()
+
+    def length(self) -> float:
+        return max(0.0, float(_resolve(self.seconds)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,7 +288,11 @@ class Latch:
 Requirement = Expr | HeldFor | Latch
 
 
-def held_for(inner: Expr, *, seconds: float = 0, minutes: float = 0) -> HeldFor:
+def held_for(inner: Expr, *, seconds: float | Callable[[], float] = 0, minutes: float = 0) -> HeldFor:
+    if callable(seconds):
+        if minutes:
+            raise ValueError("held_for takes either a callable or a fixed duration")
+        return HeldFor(inner, seconds)
     total = seconds + minutes * 60
     if total <= 0:
         raise ValueError("held_for needs a positive duration")

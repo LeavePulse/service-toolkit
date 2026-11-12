@@ -216,7 +216,7 @@ class Reactor:
                 return False, None
             if record.run_since is None:
                 record.run_since = now
-            due = record.run_since + requirement.seconds
+            due = record.run_since + requirement.length()
             return (True, None) if now >= due else (False, due)
         return requirement.evaluate(facts), None
 
@@ -554,7 +554,7 @@ class Reactor:
         if isinstance(requirement, HeldFor):
             inner = requirement.inner.explain(facts)
             truth, _ = self._truth(requirement, facts, record, self.clock())
-            return Explanation(f"held for {requirement.seconds:g}s", truth, {"run_since": record.run_since}, [inner])
+            return Explanation(f"held for {requirement.length():g}s", truth, {"run_since": record.run_since}, [inner])
         if isinstance(requirement, Latch):
             truth, _ = self._truth(requirement, facts, record, self.clock())
             return Explanation("latch", truth, {"held": record.holds}, [requirement.enter.explain(facts), requirement.exit.explain(facts)])

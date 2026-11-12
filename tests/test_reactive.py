@@ -172,6 +172,28 @@ async def test_held_for_waits_and_pauses_while_unknown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_held_for_reads_a_callable_duration_at_every_evaluation() -> None:
+    reactor, members, clock = make()
+    config = {"seconds": 600.0}
+    entered: list[str] = []
+
+    @reactor.on_enter(held_for(F.voice.present(), seconds=lambda: config["seconds"]), kind=M)
+    async def stayed(entity: EntityRef, f: Facts, t: Transition) -> None:
+        entered.append(t.id)
+
+    members.data["1"] = {"voice": None}
+    await reactor.changed(facts("1", voice=None))
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 120
+    config["seconds"] = 60.0  # shortened by a reload: the next look decides
+    await reactor.changed(facts("1", voice="a"))
+    assert len(entered) == 1
+    with pytest.raises(ValueError):
+        held_for(F.voice.present(), seconds=lambda: 1.0, minutes=1)
+
+
+@pytest.mark.asyncio
 async def test_settle_absorbs_a_flap() -> None:
     reactor, members, clock = make()
     exits: list[str] = []
