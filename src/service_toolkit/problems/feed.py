@@ -8,12 +8,14 @@ serves as that kind's ``Provider`` from the last pass, so reactive's timers
 
 What absence means is the important part:
 
-* An entity **missing from a pass** is not known to be fine. Its facts become
-  empty, every requirement over them is UNKNOWN, nothing transitions and the
-  clock of a ``hold`` pauses. A detector that sees a host as unreachable must
-  say ``reachable=False``; dropping the host from the snapshot says nothing.
+* An entity **missing from a pass** is not known to be fine. The feed has no
+  facts for it (``None``, which the reactor reads as UNKNOWN): nothing
+  transitions and the clock of a ``hold`` pauses. A detector that sees a host
+  as unreachable must say ``reachable=False``; dropping the host from the
+  snapshot says nothing.
 * An entity **removed** (decommissioned, deleted) is passed in ``removed``.
-  The reactor withdraws it, which exits every rule, so its problems resolve.
+  The feed answers ``GONE`` for it from then on, and the reactor withdraws it,
+  which exits every rule, so its problems resolve.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from service_toolkit.reactive import EntityRef, Facts, Reactor
+from service_toolkit.reactive import GONE, EntityRef, Facts, Gone, Reactor
 
 __all__ = ["SnapshotFeed"]
 
@@ -33,6 +35,7 @@ class SnapshotFeed:
         self.reactor = reactor
         self.subject = subject
         self._facts: dict[str, Facts] = {}
+        self._gone: set[str] = set()
         self._ready = False
         reactor.provide(subject, self)
 
@@ -53,25 +56,28 @@ class SnapshotFeed:
         the reactor takes passes in the order they come.
         """
         gone = set(removed)
+        unseen = [i for i in self._facts if i not in snapshot and i not in gone]
+        for subject_id in (*unseen, *gone):
+            self._facts.pop(subject_id, None)
+        self._gone |= gone
         for subject_id, fields in snapshot.items():
             if subject_id in gone:
                 continue
+            self._gone.discard(subject_id)
             self._facts[subject_id] = Facts(self.ref(subject_id), fields, version)
-        for subject_id in list(self._facts):
-            if subject_id not in snapshot and subject_id not in gone:
-                # Unseen this pass: UNKNOWN, kept so it is still listed and
-                # reactive's reconcile does not take it for departed.
-                self._facts[subject_id] = Facts(self.ref(subject_id), {}, version)
         self._ready = True
         for facts in list(self._facts.values()):
             await self.reactor.changed(facts)
+        for subject_id in unseen:
+            await self.reactor.unknown(self.ref(subject_id))
         for subject_id in gone:
-            self._facts.pop(subject_id, None)
             await self.reactor.gone(self.ref(subject_id))
 
     # ── Provider ──────────────────────────────────────────────────────────
 
-    async def facts(self, entity: EntityRef) -> Facts | None:
+    async def facts(self, entity: EntityRef) -> Facts | Gone | None:
+        if entity.id in self._gone:
+            return GONE
         return self._facts.get(entity.id)
 
     async def entities(self) -> list[EntityRef]:

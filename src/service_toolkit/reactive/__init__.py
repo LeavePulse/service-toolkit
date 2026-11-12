@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from .engine import Provider, Reactor
 from .expr import Explanation, Expr, Field, Fields, HeldFor, Latch, Requirement, Truth, held_for, latch
-from .facts import UNKNOWN, EntityRef, Facts, Unknown
+from .facts import GONE, UNKNOWN, EntityRef, Facts, Gone, Unknown
 from .rules import ConvergeRule, EdgeRule, Mode, Transition
 from .store import MemoryStore, MemoryTimers, PendingEffect, Record, RedisStore, RedisTimers, Timers, TransitionStore
 
 __all__ = [
+    "GONE",
     "UNKNOWN",
     "ConvergeRule",
     "EdgeRule",
@@ -29,6 +30,7 @@ __all__ = [
     "Facts",
     "Field",
     "Fields",
+    "Gone",
     "HeldFor",
     "Latch",
     "MemoryStore",

@@ -173,7 +173,7 @@ async def reconcile(
             if record.holds and problem is None:
                 provider = providers.get(kind.subject)
                 facts = await provider.facts(entity) if provider is not None else None
-                if facts is None:
+                if not isinstance(facts, Facts):
                     continue
                 transition_id = f"{kind.rule_name}:{entity}:{record.epoch}:enter:reconciled@{int(moment * 1000)}"
                 if await store.open(kind.kind, entity.kind, subject_id, kind.details(facts), _at(moment), transition_id):

@@ -7,7 +7,8 @@ Semantics, in the order they bite:
 * Changes to one entity are handled one at a time; entities run in parallel.
 * An older facts version than the one last applied is dropped.
 * UNKNOWN changes nothing: no exit, no converge toward absent, and the clock of
-  a ``held_for`` is paused, not advanced.
+  a ``held_for`` is paused, not advanced. A provider answering ``None`` for an
+  entity is UNKNOWN too; only ``GONE`` withdraws it and exits what it entered.
 * The first evaluation of a rule for an entity is silent: it records the state
   and fires nothing (unless the rule says ``initial="fire"``), so deploying a
   rule or losing the store does not replay enters.
@@ -31,7 +32,7 @@ from weakref import WeakValueDictionary
 from service_toolkit.time import unix_now
 
 from .expr import Expr, Explanation, HeldFor, Latch, Requirement, Truth
-from .facts import UNKNOWN, EntityRef, Facts
+from .facts import GONE, UNKNOWN, EntityRef, Facts, Gone
 from .rules import ConvergeRule, EdgeRule, Mode, Transition
 from .store import PendingEffect, Record, Timers, TransitionStore
 
@@ -48,8 +49,12 @@ RETRY_DELAYS = (5.0, 30.0, 120.0, 600.0)
 class Provider(Protocol):
     """Where the facts of one kind of entity come from."""
 
-    async def facts(self, entity: EntityRef) -> Facts | None:
-        """The current facts, or None when the entity no longer exists."""
+    async def facts(self, entity: EntityRef) -> Facts | Gone | None:
+        """The current facts; ``GONE`` when the entity no longer exists; None when they cannot be read now.
+
+        None is UNKNOWN: nothing exits, nothing is withdrawn, a ``held_for``
+        pauses. Only ``GONE`` withdraws converge and fires ``on_exit``.
+        """
 
     async def entities(self) -> list[EntityRef]:
         """Every entity of this kind, for a reconcile."""
@@ -422,10 +427,31 @@ class Reactor:
         if provider is None or not self.is_leader():
             return
         facts = await provider.facts(entity)
-        if facts is None:
+        if facts is GONE:
             await self.gone(entity)
             return
-        await self.changed(facts, fields)
+        if isinstance(facts, Facts):
+            await self.changed(facts, fields)
+            return
+        await self.unknown(entity)
+
+    async def unknown(self, entity: EntityRef) -> None:
+        """Nothing can be said about the entity right now: pause what counts time, change nothing else."""
+        if not self.is_leader():
+            return
+        async with self._lock(entity):
+            for rule in self._rules_for(entity.kind, None):
+                if isinstance(rule, EdgeRule):
+                    await self._pause(rule, entity)
+
+    async def _pause(self, rule: EdgeRule, entity: EntityRef) -> None:
+        if not isinstance(rule.requirement, HeldFor):
+            return
+        record = await self.store.get(rule.name, str(entity))
+        if record is None or record.run_since is None or record.paused_at is not None:
+            return
+        record.paused_at = self.clock()
+        await self.store.put(rule.name, str(entity), record)
 
     async def gone(self, entity: EntityRef) -> None:
         """The entity left every rule's scope: withdraw converge, exit what was entered."""
@@ -503,9 +529,13 @@ class Reactor:
             async with self._lock(entity):
                 record = await self.store.get(name, str(entity))
                 if isinstance(rule, EdgeRule) and record is not None and record.pending:
-                    await self._run_pending(rule, facts or Facts(entity, {}), record)
-                if facts is None:
+                    await self._run_pending(rule, facts if isinstance(facts, Facts) else Facts(entity, {}), record)
+                if facts is GONE:
                     await self._withdraw(rule, entity)
+                    continue
+                if not isinstance(facts, Facts):
+                    if isinstance(rule, EdgeRule):
+                        await self._pause(rule, entity)
                     continue
                 await self._evaluate(rule, facts)
 
@@ -527,15 +557,20 @@ class Reactor:
                 if pause:
                     await asyncio.sleep(pause)
             await asyncio.gather(*pending, return_exceptions=True)
-            # Entities the store remembers but the provider no longer lists have left.
+            # Entities the store remembers but the provider no longer lists are
+            # asked once more: left only if the provider says GONE, unknown if
+            # it cannot say.
             listed = {str(e) for e in entities}
+            unlisted: dict[str, None] = {}
             for name, rule in list(self._rules.items()):
                 if rule.kind != each:
                     continue
                 for ident in await self.store.entities(name):
                     if ident not in listed:
-                        k, _, rest = ident.partition(":")
-                        await self.gone(EntityRef(k, rest))
+                        unlisted[ident] = None
+            for ident in unlisted:
+                k, _, rest = ident.partition(":")
+                await self.refresh(EntityRef(k, rest))
 
     async def _reconcile_one(self, entity: EntityRef) -> None:
         async with self._slots:
@@ -553,8 +588,10 @@ class Reactor:
         if rule is None or provider is None:
             return None
         facts = await provider.facts(entity)
-        if facts is None:
+        if facts is GONE:
             return Explanation(f"{name}: entity is gone", UNKNOWN)
+        if not isinstance(facts, Facts):
+            return Explanation(f"{name}: no facts", UNKNOWN)
         if isinstance(rule, ConvergeRule):
             return Explanation(f"{name}: desired", True, {"desired": rule.desired(facts)})
         requirement = rule.requirement

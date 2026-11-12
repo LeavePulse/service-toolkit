@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, final
 
-__all__ = ["UNKNOWN", "EntityRef", "Facts", "Unknown"]
+__all__ = ["GONE", "UNKNOWN", "EntityRef", "Facts", "Gone", "Unknown"]
 
 
 @final
@@ -48,6 +48,29 @@ class Unknown:
 
 
 UNKNOWN: Final = Unknown()
+
+
+@final
+class Gone:
+    """What a provider's ``facts`` returns for an entity that no longer exists.
+
+    The only way to say so: ``None`` from a provider means "cannot say right
+    now" and changes nothing, because a source that is down must not read as
+    every entity having left.
+    """
+
+    _instance: Gone | None = None
+
+    def __new__(cls) -> Gone:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "GONE"
+
+
+GONE: Final = Gone()
 
 
 @dataclass(frozen=True, slots=True)

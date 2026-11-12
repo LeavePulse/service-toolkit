@@ -6,10 +6,12 @@ from typing import Any
 import pytest
 
 from service_toolkit.reactive import (
+    GONE,
     UNKNOWN,
     EntityRef,
     Facts,
     Fields,
+    Gone,
     MemoryStore,
     MemoryTimers,
     Reactor,
@@ -37,11 +39,14 @@ class Members:
         self.data: dict[str, dict[str, Any]] = {}
         self.is_ready = True
         self.joins: dict[str, list[str]] = {}
+        self.removed: set[str] = set()
 
     def ref(self, ident: str) -> EntityRef:
         return EntityRef(M, ident)
 
-    async def facts(self, entity: EntityRef) -> Facts | None:
+    async def facts(self, entity: EntityRef) -> Facts | Gone | None:
+        if entity.id in self.removed:
+            return GONE
         row = self.data.get(entity.id)
         return None if row is None else Facts(entity, row)
 
@@ -473,6 +478,7 @@ async def test_reconcile_catches_missed_changes_and_departures() -> None:
     assert log == []
     # While nobody was listening: 1 joined, 2 left the server.
     members.data = {"1": {"voice": "a"}}
+    members.removed = {"2"}
     await reactor.reconcile()
     assert sorted(log) == ["enter 1", "exit 2"]
     assert withdrawn == ["2"]
@@ -574,3 +580,74 @@ async def test_remove_forgets_a_rule_and_keeps_its_state() -> None:
     reactor.on_enter(F.voice.present(), kind=M, name="stay")(handler)
     record = await reactor.store.get("stay", "member:1")
     assert record is not None and record.holds is True
+
+
+def edge_log(reactor: Reactor, requirement: Any, log: list[str], **kwargs: Any) -> None:
+    async def entered(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append(f"enter {entity.id}")
+
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        log.append(f"exit {entity.id}")
+
+    reactor.on_enter(requirement, kind=M, name="in", **kwargs)(entered)
+    reactor.on_exit(requirement, kind=M, name="out")(left)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_without_facts_is_unknown_and_only_gone_exits() -> None:
+    reactor, members, _ = make()
+    log: list[str] = []
+    withdrawn: list[str] = []
+
+    async def observe(entity: EntityRef) -> Any:
+        return UNKNOWN
+
+    async def withdraw(entity: EntityRef) -> None:
+        withdrawn.append(entity.id)
+
+    @reactor.converge(F.voice.present(), kind=M, observe=observe, withdraw=withdraw, verify=False)
+    async def grant(entity: EntityRef, desired: Any) -> None:
+        pass
+
+    edge_log(reactor, F.voice.present(), log)
+    members.data = {"1": {"voice": "a"}}
+    await reactor.reconcile()
+    # The source cannot say: not listed, no facts. Nothing exits, nothing is withdrawn.
+    members.data = {}
+    await reactor.refresh(members.ref("1"))
+    await reactor.reconcile()
+    await reactor.run_timers()
+    assert (log, withdrawn) == ([], [])
+    assert await reactor.store.get("out", "member:1") is not None
+    # Said to be gone: now it leaves.
+    members.removed = {"1"}
+    await reactor.reconcile()
+    assert (log, withdrawn) == (["exit 1"], ["1"])
+    assert await reactor.store.get("out", "member:1") is None
+
+
+@pytest.mark.asyncio
+async def test_held_for_pauses_while_the_provider_has_no_facts() -> None:
+    reactor, members, clock = make()
+    log: list[str] = []
+    edge_log(reactor, held_for(F.voice.present(), minutes=5), log)
+    members.data["1"] = {"voice": None}
+    await reactor.changed(facts("1", voice=None))
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 60
+    del members.data["1"]
+    await reactor.refresh(members.ref("1"))
+    clock.now += 600
+    # The timer comes due while there are no facts: it pauses, it does not fire or withdraw.
+    await reactor.run_timers()
+    await reactor.reconcile()
+    assert log == []
+    members.data["1"] = {"voice": "a"}
+    await reactor.refresh(members.ref("1"))
+    clock.now += 230
+    await reactor.run_timers()
+    assert log == []
+    clock.now += 20
+    await reactor.run_timers()
+    assert log == ["enter 1"]

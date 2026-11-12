@@ -109,8 +109,9 @@ Rules for what a pass sends:
   `reachable=False`. A host missing from a pass is UNKNOWN: nothing opens or
   resolves, and a running `hold` pauses rather than counting the gap.
 - **Removal is explicit.** Only an id in `removed` (decommissioned, deleted)
-  withdraws the subject, which resolves its problems. A subject that disappears
-  without being removed stays listed with unknown facts.
+  withdraws the subject, which resolves its problems: the feed answers `GONE`
+  for it. A subject that disappears without being removed has no facts, which
+  reactive reads as UNKNOWN, so its problems stay as they are.
 - **Reconcile after the pass.** Edge delivery is at least once, and reactive's
   store can be lost along with an exit. `reconcile` compares each rule's
   recorded state with the store, opens what holds but is missing and resolves
