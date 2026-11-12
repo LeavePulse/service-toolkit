@@ -13,6 +13,7 @@ Reusable infrastructure helpers for LeavePulse services. Currently provides:
 - Redis-backed request rate limiting helpers with explicit failure policies (`enforce_request_rate_limit`, `rate_limited_request`).
 - Unified local/Redis/hybrid lookup cache with TTL, in-flight deduplication, and Redis fallback policies (`LookupCache`).
 - gRPC client/server helpers: shared channels, default timeouts, metrics/JWT/internal-token interceptors, error translation, and proto optional-field utilities.
+- Problems as first-class entities with history (`service_toolkit.problems`), built on `service_toolkit.reactive`; see [docs/problems.md](docs/problems.md).
 - (Extensible) space for other shared service utilities.
 
 `service-toolkit` no longer owns provider contracts or provider-specific DX.
