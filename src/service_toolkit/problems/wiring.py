@@ -21,12 +21,12 @@ it opens what the rule says holds and closes what it says does not.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from service_toolkit.reactive import UNKNOWN, ConvergeRule, EdgeRule, EntityRef, Facts, Provider, Reactor, Transition
+from service_toolkit.reactive import UNKNOWN, ConvergeRule, EdgeRule, EntityRef, Facts, Reactor, Transition
 
 from .model import ProblemDetails, ProblemKind
 from .store import ProblemStore
@@ -125,23 +125,23 @@ async def reconcile(
     reactor: Reactor,
     kinds: Iterable[ProblemKind],
     store: ProblemStore,
-    providers: Mapping[str, Provider],
 ) -> ReconcileReport:
     """Bring the problem store in line with what each rule has recorded.
 
-    Run it on start, on gaining leadership and after every pass or resync: an
-    exit lost with reactive's store, or an effect that failed for good, leaves
-    a problem open (or missing) that no future edge would fix. A rule with no
-    decision for an entity (no record, UNKNOWN so far, or an effect still being
-    retried) is left alone: "not known" never resolves anything.
+    Run it after every pass, and hook it to the reactor's own reconciles
+    (``Reactor.on_reconciled``): an exit lost with reactive's store, or an
+    effect that failed for good, leaves a problem open (or missing) that no
+    future edge would fix. A rule with no decision for an entity (no record,
+    UNKNOWN so far, or an effect still being retried) is left alone: "not
+    known" never resolves anything. Each subject is handled under the
+    reactor's lock for it, so the engine cannot cross it halfway.
 
-    ``providers`` give the facts to phrase a problem that must be opened; an
-    entity they cannot describe is skipped until they can.
+    A problem that must be opened is phrased from the kind's provider; an
+    entity it cannot describe is skipped until it can.
     """
     report = ReconcileReport()
     if not reactor.is_leader():
         return report
-    moment = reactor.clock()
     for kind in kinds:
         if kind.mode != "live" or not reactor.enabled(kind.rule_name):
             continue
@@ -150,22 +150,29 @@ async def reconcile(
         subjects.update(e[len(prefix):] for e in await reactor.store.entities(kind.rule_name) if e.startswith(prefix))
         for subject_id in sorted(subjects):
             entity = EntityRef(kind.subject, subject_id)
-            record = await reactor.store.get(kind.rule_name, str(entity))
-            if record is None or record.holds is None or record.pending:
-                continue
-            problem = await store.get_open(kind.kind, subject_id)
-            if record.holds and problem is None:
-                provider = providers.get(kind.subject)
-                facts = await provider.facts(entity) if provider is not None else None
-                if not isinstance(facts, Facts):
-                    continue
-                transition_id = f"{kind.rule_name}:{entity}:{record.epoch}:enter:reconciled@{int(moment * 1000)}"
-                if await store.open(kind.kind, entity.kind, subject_id, kind.details(facts), _at(moment), transition_id):
-                    report.opened += 1
-                    log.warning("problem_reconciled_open kind=%s subject=%s", kind.kind, str(entity))
-            elif not record.holds and problem is not None:
-                transition_id = f"{kind.rule_name}:{entity}:{record.epoch}:exit:reconciled@{int(moment * 1000)}"
-                if await store.resolve(kind.kind, subject_id, _at(moment), transition_id):
-                    report.resolved += 1
-                    log.warning("problem_reconciled_resolve kind=%s subject=%s", kind.kind, str(entity))
+            async with reactor.locked(entity):
+                await _reconcile_one(reactor, kind, store, entity, report)
     return report
+
+
+async def _reconcile_one(reactor: Reactor, kind: ProblemKind, store: ProblemStore, entity: EntityRef, report: ReconcileReport) -> None:
+    record = await reactor.store.get(kind.rule_name, str(entity))
+    if record is None or record.holds is None or record.pending:
+        return
+    moment = reactor.clock()
+    crossing = f"{kind.rule_name}:{entity}:{record.generation}-{record.epoch}"
+    problem = await store.get_open(kind.kind, entity.id)
+    if record.holds and problem is None:
+        provider = reactor.provider(kind.subject)
+        facts = await provider.facts(entity) if provider is not None else None
+        if not isinstance(facts, Facts):
+            return
+        transition_id = f"{crossing}:enter:reconciled@{int(moment * 1000)}"
+        if await store.open(kind.kind, entity.kind, entity.id, kind.details(facts), _at(moment), transition_id):
+            report.opened += 1
+            log.warning("problem_reconciled_open kind=%s subject=%s", kind.kind, str(entity))
+    elif not record.holds and problem is not None:
+        transition_id = f"{crossing}:exit:reconciled@{int(moment * 1000)}"
+        if await store.resolve(kind.kind, entity.id, _at(moment), transition_id):
+            report.resolved += 1
+            log.warning("problem_reconciled_resolve kind=%s subject=%s", kind.kind, str(entity))

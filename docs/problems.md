@@ -71,6 +71,13 @@ hosts = SnapshotFeed(reactor, "host")                       # provider for "host
 tables = problem_tables(Base.metadata, prefix="network_")   # network_problems, network_problem_transitions
 store = SqlProblemStore(tables, async_sessionmaker(engine).begin)
 install(reactor, PROBLEMS, store)
+
+
+async def problems_reconciled(kind: str, seen: frozenset[EntityRef]) -> None:
+    await reconcile(reactor, PROBLEMS, store)
+
+
+reactor.on_reconciled("host", problems_reconciled)
 await reactor.start()                                       # timers, resync, reconcile on leader gain
 ```
 
@@ -100,7 +107,7 @@ async def pass_once() -> None:
          for h in view.hosts},
         removed=view.decommissioned_ids,
     )
-    await reconcile(reactor, PROBLEMS, store, {"host": hosts})
+    await reconcile(reactor, PROBLEMS, store)
 ```
 
 Rules for what a pass sends:
@@ -116,7 +123,11 @@ Rules for what a pass sends:
   store can be lost along with an exit. `reconcile` compares each rule's
   recorded state with the store, opens what holds but is missing and resolves
   what no longer holds. A rule with no decision yet, or an effect still being
-  retried, is left alone.
+  retried, is left alone. Each subject is checked under `reactor.locked`, so
+  it never races the engine; the facts to phrase a new problem come from
+  `reactor.provider(subject)`. The `on_reconciled` hook in the wiring above
+  runs the same check after reactive's own reconciles (start, leadership
+  gained, resync).
 
 ## Rollout
 

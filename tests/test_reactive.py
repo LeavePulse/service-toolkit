@@ -783,3 +783,22 @@ async def test_a_transition_carries_its_explanation() -> None:
     assert "roles contains 'staff' -> True" in entered.render()
     assert exited is not None and exited.value is False
     assert "voice present -> False" in exited.render()
+
+
+@pytest.mark.asyncio
+async def test_outside_work_under_locked_runs_one_at_a_time_with_the_engine() -> None:
+    reactor, members, _ = make()
+    seen: list[str] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M, initial="fire")
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append("enter")
+
+    assert reactor.provider(M) is members
+    assert reactor.provider("room") is None
+    async with reactor.locked(members.ref("1")):
+        task = asyncio.create_task(reactor.changed(facts("1", voice="a")))
+        await asyncio.sleep(0.01)
+        seen.append("outside")
+    await task
+    assert seen == ["outside", "enter"]

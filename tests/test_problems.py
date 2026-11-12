@@ -332,7 +332,7 @@ async def test_reconcile_closes_what_a_lost_store_forgot(store: ProblemStore) ->
     await feed.push({"a": {"road_home": True}})
     assert len(await store.open_problems()) == 1
 
-    report = await reconcile(reactor, [kind], store, {H: feed})
+    report = await reconcile(reactor, [kind], store)
     assert (report.opened, report.resolved) == (0, 1)
     assert await store.open_problems() == []
 
@@ -344,11 +344,11 @@ async def test_reconcile_opens_what_holds_but_is_missing(store: ProblemStore) ->
     await feed.push({"a": {"road_home": False}})
     [problem] = await store.open_problems()
     await store.resolve(kind.kind, "a", ts(1), "lost-elsewhere")
-    report = await reconcile(reactor, [kind], store, {H: feed})
+    report = await reconcile(reactor, [kind], store)
     assert report.opened == 1
     assert [p.subject_id for p in await store.open_problems()] == ["a"]
     # Nothing left to do: a second reconcile is a no-op.
-    report = await reconcile(reactor, [kind], store, {H: feed})
+    report = await reconcile(reactor, [kind], store)
     assert (report.opened, report.resolved) == (0, 0)
 
 
@@ -372,7 +372,7 @@ async def test_shadow_writes_nothing(store: ProblemStore) -> None:
     reactor, feed, _ = world(store, kind)
     await feed.push({"a": {"road_home": False}})
     assert await store.open_problems() == []
-    await reconcile(reactor, [kind], store, {H: feed})
+    await reconcile(reactor, [kind], store)
     assert await store.open_problems() == []
 
 

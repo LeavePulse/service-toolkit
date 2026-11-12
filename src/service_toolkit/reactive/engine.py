@@ -25,7 +25,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from typing import Any, Literal, Protocol
 from weakref import WeakValueDictionary
 
@@ -135,6 +136,10 @@ class Reactor:
 
     def provide(self, kind: str, provider: Provider) -> None:
         self._providers[kind] = provider
+
+    def provider(self, kind: str) -> Provider | None:
+        """The provider registered for ``kind``."""
+        return self._providers.get(kind)
 
     def on_reconciled(self, kind: str, callback: ReconciledHook) -> Callable[[], None]:
         """Call ``callback(kind, entities)`` after every reconcile of ``kind`` (start,
@@ -443,6 +448,14 @@ class Reactor:
             lock = asyncio.Lock()
             self._locks[name] = lock
         return lock
+
+    @asynccontextmanager
+    async def locked(self, entity: EntityRef) -> AsyncIterator[None]:
+        """Hold the lock the engine evaluates ``entity`` under, so outside work on
+        the same entity runs one at a time with it. Not reentrant: calling the
+        reactor for this entity inside the block waits forever."""
+        async with self._lock(entity):
+            yield
 
     async def changed(self, facts: Facts, fields: Iterable[str] | None = None) -> None:
         """Facts of one entity changed. ``fields`` narrows which rules wake; None wakes all of its kind."""
