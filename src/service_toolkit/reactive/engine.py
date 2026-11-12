@@ -426,6 +426,17 @@ class Reactor:
             for rule in self._rules_for(entity.kind, None):
                 await self._withdraw(rule, entity)
 
+    def remove(self, name: str) -> None:
+        """Forget a rule without touching what it holds: for a module being reloaded,
+        which registers the same rule again a moment later. ``retire`` withdraws."""
+        rule = self._rules.pop(name, None)
+        if rule is None:
+            return
+        for names in self._index.get(rule.kind, {}).values():
+            if name in names:
+                names.remove(name)
+        self._owners = {k: v for k, v in self._owners.items() if v != name}
+
     async def retire(self, name: str) -> None:
         """Remove a rule and withdraw everything it holds, so nothing it granted outlives it."""
         rule = self._rules.get(name)

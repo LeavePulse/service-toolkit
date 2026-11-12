@@ -497,3 +497,18 @@ async def test_repeat_is_a_heartbeat_while_it_holds() -> None:
     clock.now += 7200
     await reactor.run_timers()
     assert len(beats) == 2
+
+
+@pytest.mark.asyncio
+async def test_remove_forgets_a_rule_and_keeps_its_state() -> None:
+    reactor, _, _ = make()
+
+    async def handler(entity: EntityRef, f: Facts, t: Transition) -> None:
+        pass
+
+    reactor.on_enter(F.voice.present(), kind=M, name="stay")(handler)
+    await reactor.changed(facts("1", voice="a"))
+    reactor.remove("stay")
+    reactor.on_enter(F.voice.present(), kind=M, name="stay")(handler)
+    record = await reactor.store.get("stay", "member:1")
+    assert record is not None and record.holds is True
