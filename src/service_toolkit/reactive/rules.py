@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .expr import Requirement
+from .expr import Explanation, Requirement
 from .facts import EntityRef, Facts
 
 __all__ = ["ConvergeRule", "EdgeRule", "Mode", "Transition"]
@@ -30,6 +30,9 @@ class Transition:
     kind: Literal["enter", "exit"]
     epoch: int
     at: float
+    # Why the rule reads as it does for the facts the handler is given, as
+    # ``Reactor.explain`` would put it.
+    explanation: Explanation | None = None
 
 
 EdgeHandler = Callable[[EntityRef, Facts, Transition], Awaitable[None]]

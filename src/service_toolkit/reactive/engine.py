@@ -357,14 +357,18 @@ class Reactor:
         entity = facts.entity
         left: list[PendingEffect] = []
         retry_at: float | None = None
+        explanation: Explanation | None = None
         for effect in record.pending:
             handler = rule.on_enter if effect.kind == "enter" else rule.on_exit
             if handler is None or not self._acting(rule):
                 continue
+            if explanation is None:
+                explanation = self._explain_edge(rule, facts, msgspec.structs.replace(record))
             transition = Transition(
                 effect.id, rule.name, entity, "enter" if effect.kind == "enter" else "exit",
                 record.epoch if effect.epoch is None else effect.epoch,
                 self.clock() if effect.at is None else effect.at,
+                explanation,
             )
             try:
                 await handler(entity, facts, transition)
@@ -639,8 +643,11 @@ class Reactor:
             return Explanation(f"{name}: no facts", UNKNOWN)
         if isinstance(rule, ConvergeRule):
             return Explanation(f"{name}: desired", True, {"desired": rule.desired(facts)})
+        return self._explain_edge(rule, facts, await self.store.get(name, str(entity)) or Record())
+
+    def _explain_edge(self, rule: EdgeRule, facts: Facts, record: Record) -> Explanation:
+        """``record`` is a copy: reading time-based requirements updates it."""
         requirement = rule.requirement
-        record = await self.store.get(name, str(entity)) or Record()
         if isinstance(requirement, HeldFor):
             inner = requirement.inner.explain(facts)
             truth, _ = self._truth(requirement, facts, record, self.clock())

@@ -760,3 +760,26 @@ async def test_a_pending_effect_from_before_at_retries_at_the_time_of_retry() ->
     await reactor.timers.schedule("joined|member:1", clock.now)
     await reactor.run_timers()
     assert [(t.id, t.at, t.epoch) for t in seen] == [("joined:member:1:1:enter", clock.now, 3)]
+
+
+@pytest.mark.asyncio
+async def test_a_transition_carries_its_explanation() -> None:
+    reactor, _, _ = make()
+    seen: list[Transition] = []
+
+    @reactor.on_enter(in_voice_staff, kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(t)
+
+    @reactor.on_exit(in_voice_staff, kind=M)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(t)
+
+    await reactor.changed(facts("1", voice="a", roles=set()))
+    await reactor.changed(facts("1", voice="a", roles={"staff"}))
+    await reactor.changed(facts("1", voice=None, roles={"staff"}))
+    entered, exited = (t.explanation for t in seen)
+    assert entered is not None and entered.value is True
+    assert "roles contains 'staff' -> True" in entered.render()
+    assert exited is not None and exited.value is False
+    assert "voice present -> False" in exited.render()
