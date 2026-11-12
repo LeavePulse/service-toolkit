@@ -262,10 +262,16 @@ class HeldFor:
     ``seconds`` may be a callable, resolved at every evaluation like the values
     of a check: a duration from config follows a reload. A run already timed
     is looked at again when its old due time comes, or sooner on any change.
+
+    ``grace`` forgives a break: while ``inner`` has been false for less than
+    that, the run goes on as if it had not been, the gap counts towards it and
+    the outcome stays what it was. Waiting in a queue is like that: stepping
+    out for a minute and back does not start the wait again.
     """
 
     inner: Expr
     seconds: float | Callable[[], float]
+    grace: float = 0.0
 
     def fields(self) -> frozenset[str]:
         return self.inner.fields()
@@ -288,15 +294,19 @@ class Latch:
 Requirement = Expr | HeldFor | Latch
 
 
-def held_for(inner: Expr, *, seconds: float | Callable[[], float] = 0, minutes: float = 0) -> HeldFor:
+def held_for(
+    inner: Expr, *, seconds: float | Callable[[], float] = 0, minutes: float = 0, grace: float = 0.0,
+) -> HeldFor:
+    if grace < 0:
+        raise ValueError("held_for grace cannot be negative")
     if callable(seconds):
         if minutes:
             raise ValueError("held_for takes either a callable or a fixed duration")
-        return HeldFor(inner, seconds)
+        return HeldFor(inner, seconds, grace)
     total = seconds + minutes * 60
     if total <= 0:
         raise ValueError("held_for needs a positive duration")
-    return HeldFor(inner, total)
+    return HeldFor(inner, total, grace)
 
 
 def latch(*, enter: Expr, exit: Expr) -> Latch:

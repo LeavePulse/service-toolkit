@@ -52,6 +52,9 @@ class Record(msgspec.Struct):
     # missing (UNKNOWN pauses the clock rather than counting the gap).
     run_since: float | None = None
     paused_at: float | None = None
+    # held_for grace: when the inner requirement stopped holding, while the
+    # break is still forgivable.
+    broken_at: float | None = None
     # settle: a change seen but not yet committed, and when to commit it.
     candidate: bool | None = None
     candidate_due: float | None = None

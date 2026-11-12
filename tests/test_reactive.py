@@ -194,6 +194,46 @@ async def test_held_for_reads_a_callable_duration_at_every_evaluation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_held_for_grace_forgives_a_short_break() -> None:
+    reactor, members, clock = make()
+    seen: list[str] = []
+
+    @reactor.on_enter(held_for(F.voice.present(), minutes=10, grace=300), kind=M)
+    async def waited(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append("enter")
+
+    @reactor.on_exit(held_for(F.voice.present(), minutes=10, grace=300), kind=M)
+    async def gave_up(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append("exit")
+
+    async def show(voice: str | None) -> None:
+        members.data["1"] = {"voice": voice}
+        await reactor.changed(facts("1", voice=voice))
+
+    await show(None)
+    await show("a")
+    clock.now += 240
+    await show(None)  # out for two minutes: forgiven, and the gap counts
+    clock.now += 120
+    await show("a")
+    clock.now += 250  # 610 s since the start
+    await reactor.run_timers()
+    assert seen == ["enter"]
+    await show(None)  # a short break after the enter changes nothing
+    clock.now += 100
+    await show("a")
+    assert seen == ["enter"]
+    await show(None)
+    clock.now += 301  # the break outlived the grace: the run is over
+    await reactor.run_timers()
+    assert seen == ["enter", "exit"]
+    await show("a")
+    clock.now += 300
+    await reactor.run_timers()
+    assert seen == ["enter", "exit"]  # a new run counts from zero
+
+
+@pytest.mark.asyncio
 async def test_settle_absorbs_a_flap() -> None:
     reactor, members, clock = make()
     exits: list[str] = []

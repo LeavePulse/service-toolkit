@@ -212,8 +212,16 @@ class Reactor:
                 record.run_since += now - record.paused_at
             record.paused_at = None
             if inner is False:
+                if record.run_since is not None and requirement.grace > 0:
+                    if record.broken_at is None:
+                        record.broken_at = now
+                    forgiven = record.broken_at + requirement.grace
+                    if now < forgiven:
+                        return record.holds is True, forgiven
                 record.run_since = None
+                record.broken_at = None
                 return False, None
+            record.broken_at = None
             if record.run_since is None:
                 record.run_since = now
             due = record.run_since + requirement.length()
