@@ -2,8 +2,12 @@
 
 A problem says what is wrong with one subject (a host, an edge, a service),
 since when, on what evidence, and what the system is doing about it. A service
-declares its ``ProblemKind`` values in one ``ProblemRegistry``. The
-``ProblemStore`` keeps the problems and an append-only transition log.
+declares its ``ProblemKind`` values in one ``ProblemRegistry``; ``install``
+turns each into reactive rules, so a problem opens when its requirement starts
+to hold (after ``hold``), updates while it stays, and resolves when it stops.
+The ``ProblemStore`` keeps the problems and an append-only transition log.
+
+See ``docs/problems.md`` for the model and how a reconcile pass feeds it.
 ``SqlProblemStore`` and ``problem_tables`` need the ``sqlalchemy`` extra and
 are imported on first use.
 """
@@ -14,6 +18,7 @@ import importlib
 import sys
 from typing import Any
 
+from .feed import SnapshotFeed
 from .model import (
     GENERATION_FIELD,
     Action,
@@ -30,6 +35,7 @@ from .model import (
     Waiting,
 )
 from .store import MemoryProblemStore, ProblemEvent, ProblemStore
+from .wiring import ReconcileReport, install, reconcile, uninstall
 
 __all__ = [
     "GENERATION_FIELD",
@@ -46,11 +52,16 @@ __all__ = [
     "ProblemStore",
     "ProblemTables",
     "ProblemTransition",
+    "ReconcileReport",
     "Remedy",
     "Severity",
+    "SnapshotFeed",
     "SqlProblemStore",
     "Waiting",
+    "install",
     "problem_tables",
+    "reconcile",
+    "uninstall",
 ]
 
 # SQLAlchemy is an optional extra; a service with the memory store only must

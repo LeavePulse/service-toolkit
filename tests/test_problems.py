@@ -21,13 +21,25 @@ from service_toolkit.problems import (
     ProblemRegistry,
     ProblemStore,
     Remedy,
+    SnapshotFeed,
     Waiting,
+    install,
+    reconcile,
+    uninstall,
 )
 from service_toolkit.problems.sql import SqlProblemStore, problem_tables
-from service_toolkit.reactive import Fields, held_for
+from service_toolkit.reactive import Fields, MemoryStore, MemoryTimers, Reactor, held_for
 
 F = Fields()
 H = "host"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 class Ids:
@@ -81,6 +93,14 @@ def road_home(**overrides: Any) -> ProblemKind:
     }
     spec.update(overrides)
     return ProblemKind(**spec)
+
+
+def world(store: ProblemStore, *kinds: ProblemKind) -> tuple[Reactor, SnapshotFeed, Clock]:
+    clock = Clock()
+    reactor = Reactor(store=MemoryStore(), timers=MemoryTimers(), clock=clock, jitter=0, reconcile_rate=0)
+    feed = SnapshotFeed(reactor, H)
+    install(reactor, kinds, store)
+    return reactor, feed, clock
 
 
 async def history(store: ProblemStore, problem: Problem) -> list[str]:
@@ -184,3 +204,186 @@ def test_tables_take_the_owners_prefix_and_compile_for_postgres() -> None:
     assert "UNIQUE (transition_id)" in str(CreateTable(tables.transitions).compile(dialect=dialect))
     [open_index] = [i for i in tables.problems.indexes if i.unique]
     assert "WHERE resolved_at IS NULL" in str(CreateIndex(open_index).compile(dialect=dialect))
+
+
+# ── lifecycle ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_opens_after_hold_updates_and_resolves(store: ProblemStore) -> None:
+    _, feed, clock = world(store, road_home(hold=30))
+
+    await feed.push({"a": {"road_home": False, "isolated": False, "generation": 7}})
+    assert await store.open_problems() == []
+    clock.now += 31
+    await feed.push({"a": {"road_home": False, "isolated": False, "generation": 7}})
+    [problem] = await store.open_problems()
+    assert (problem.kind, problem.subject_kind, problem.subject_id) == ("RoadHomeMissing", H, "a")
+    assert problem.severity == "warning"
+    assert problem.message == "host a has no road home"
+    assert problem.action == Waiting(for_="handshake")
+    assert problem.evidence == {"road_home": False}
+    assert problem.observed_generation == 7
+    assert problem.first_seen == ts(clock.now)
+
+    # A change while open is an update; the same facts again only move last_probe.
+    clock.now += 10
+    await feed.push({"a": {"road_home": False, "isolated": True, "generation": 7}})
+    clock.now += 10
+    await feed.push({"a": {"road_home": False, "isolated": True, "generation": 7}})
+    [problem] = await store.open_problems()
+    assert problem.severity == "critical"
+    assert problem.last_transition == ts(clock.now - 10)
+    assert problem.last_probe == ts(clock.now)
+
+    clock.now += 5
+    await feed.push({"a": {"road_home": True, "isolated": True, "generation": 7}})
+    assert await store.open_problems() == []
+    found = await store.problem(problem.id)
+    assert found is not None
+    resolved, rows = found
+    assert resolved.resolved_at == ts(clock.now)
+    assert [(r.from_state, r.to_state) for r in rows] == [(None, "open"), ("open", "updated"), ("updated", "resolved")]
+    assert rows[1].changes == {"severity": "critical"}
+    assert rows[0].transition_id == "problem:RoadHomeMissing:host:a:1:enter"
+
+
+@pytest.mark.asyncio
+async def test_a_problem_present_when_the_kind_ships_opens(store: ProblemStore) -> None:
+    # Reactive's first evaluation is silent by default; problems must not be.
+    _, feed, _ = world(store, road_home())
+    await feed.push({"a": {"road_home": False}})
+    assert [p.subject_id for p in await store.open_problems()] == ["a"]
+
+
+class CrashAfterOpen:
+    """Writes the open, then fails, as a crash before reactive records success would."""
+
+    def __init__(self, inner: ProblemStore) -> None:
+        self.inner = inner
+        self.crashes = 1
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    async def open(self, *args: Any) -> Problem | None:
+        result = await self.inner.open(*args)
+        if self.crashes:
+            self.crashes -= 1
+            raise RuntimeError("lost after commit")
+        return result
+
+
+@pytest.mark.asyncio
+async def test_a_retried_enter_after_a_committed_open_is_one_open(store: ProblemStore) -> None:
+    flaky = CrashAfterOpen(store)
+    reactor, feed, clock = world(flaky, road_home())  # type: ignore[arg-type]
+    await feed.push({"a": {"road_home": False}})
+    assert flaky.crashes == 0
+    clock.now += 600
+    await reactor.run_timers()
+    [problem] = await store.open_problems()
+    assert await history(store, problem) == ["open"]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_entity_is_unknown_and_a_removed_one_resolves(store: ProblemStore) -> None:
+    _, feed, _ = world(store, road_home())
+    await feed.push({"a": {"road_home": False}, "b": {"road_home": False}})
+    assert len(await store.open_problems()) == 2
+
+    # Not seen this pass: nothing is known, nothing resolves.
+    await feed.push({"b": {"road_home": False}})
+    assert len(await store.open_problems()) == 2
+
+    # Decommissioned: said explicitly, and only then resolved.
+    await feed.push({"b": {"road_home": False}}, removed=["a"])
+    assert [p.subject_id for p in await store.open_problems()] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_held_for_pauses_while_the_entity_is_unseen(store: ProblemStore) -> None:
+    _, feed, clock = world(store, road_home(hold=30))
+    await feed.push({"a": {"road_home": False}})
+    clock.now += 20
+    await feed.push({})
+    clock.now += 100
+    await feed.push({})
+    assert await store.open_problems() == []
+    # The unseen gap did not count: 20s held so far, 10 more to go.
+    await feed.push({"a": {"road_home": False}})
+    clock.now += 9
+    await feed.push({"a": {"road_home": False}})
+    assert await store.open_problems() == []
+    clock.now += 2
+    await feed.push({"a": {"road_home": False}})
+    assert len(await store.open_problems()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_closes_what_a_lost_store_forgot(store: ProblemStore) -> None:
+    kind = road_home()
+    reactor, feed, _ = world(store, kind)
+    await feed.push({"a": {"road_home": False}})
+    # Reactive's store is lost, and the host heals meanwhile: the first new
+    # evaluation records "does not hold" without an exit.
+    reactor.store = MemoryStore()
+    await feed.push({"a": {"road_home": True}})
+    assert len(await store.open_problems()) == 1
+
+    report = await reconcile(reactor, [kind], store, {H: feed})
+    assert (report.opened, report.resolved) == (0, 1)
+    assert await store.open_problems() == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_opens_what_holds_but_is_missing(store: ProblemStore) -> None:
+    kind = road_home()
+    reactor, feed, _ = world(store, kind)
+    await feed.push({"a": {"road_home": False}})
+    [problem] = await store.open_problems()
+    await store.resolve(kind.kind, "a", ts(1), "lost-elsewhere")
+    report = await reconcile(reactor, [kind], store, {H: feed})
+    assert report.opened == 1
+    assert [p.subject_id for p in await store.open_problems()] == ["a"]
+    # Nothing left to do: a second reconcile is a no-op.
+    report = await reconcile(reactor, [kind], store, {H: feed})
+    assert (report.opened, report.resolved) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_an_id_reused_after_a_store_loss_opens_a_new_problem(store: ProblemStore) -> None:
+    reactor, feed, _ = world(store, road_home())
+    await feed.push({"a": {"road_home": False}})
+    await feed.push({"a": {"road_home": True}})
+    reactor.store = MemoryStore()
+    # Epochs start again at 1, so this enter carries the first one's id.
+    await feed.push({"a": {"road_home": False}})
+    [problem] = await store.open_problems()
+    found = await store.problem(problem.id)
+    assert found is not None
+    assert found[1][0].transition_id.startswith("problem:RoadHomeMissing:host:a:1:enter@")
+    events = await store.recent()
+    assert len({e.transition.problem_id for e in events}) == 2
+
+
+@pytest.mark.asyncio
+async def test_shadow_writes_nothing(store: ProblemStore) -> None:
+    kind = road_home(mode="shadow")
+    reactor, feed, _ = world(store, kind)
+    await feed.push({"a": {"road_home": False}})
+    assert await store.open_problems() == []
+    await reconcile(reactor, [kind], store, {H: feed})
+    assert await store.open_problems() == []
+
+
+@pytest.mark.asyncio
+async def test_uninstall_keeps_open_problems(store: ProblemStore) -> None:
+    kind = road_home()
+    reactor, feed, _ = world(store, kind)
+    await feed.push({"a": {"road_home": False}})
+    uninstall(reactor, [kind])
+    install(reactor, [kind], store)
+    await feed.push({"a": {"road_home": False}})
+    [problem] = await store.open_problems()
+    assert await history(store, problem) == ["open"]
