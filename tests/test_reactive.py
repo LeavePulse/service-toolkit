@@ -472,3 +472,28 @@ async def test_explain_names_what_was_read() -> None:
     assert explained is not None
     assert explained.value is False
     assert "roles contains 'staff' -> False" in explained.render()
+
+
+@pytest.mark.asyncio
+async def test_repeat_is_a_heartbeat_while_it_holds() -> None:
+    reactor, members, clock = make()
+    beats: list[str] = []
+
+    @reactor.on_enter(held_for(F.occupied.truthy(), minutes=5), kind=M, repeat=3600)
+    async def touch(entity: EntityRef, f: Facts, t: Transition) -> None:
+        beats.append(t.id)
+
+    members.data["1"] = {"occupied": False}
+    await reactor.changed(facts("1", occupied=False))
+    members.data["1"] = {"occupied": True}
+    await reactor.changed(facts("1", occupied=True))
+    clock.now += 301
+    await reactor.run_timers()
+    clock.now += 3600
+    await reactor.run_timers()
+    assert beats == ["touch:member:1:1:enter", "touch:member:1:1:enter:r1"]
+    members.data["1"] = {"occupied": False}
+    await reactor.changed(facts("1", occupied=False))
+    clock.now += 7200
+    await reactor.run_timers()
+    assert len(beats) == 2

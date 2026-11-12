@@ -124,10 +124,10 @@ class Reactor:
 
     def on_enter(
         self, requirement: Requirement, *, kind: str, name: str | None = None, settle: float = 0.0,
-        initial: Literal["silent", "fire"] = "silent", mode: Mode = "live",
+        initial: Literal["silent", "fire"] = "silent", mode: Mode = "live", repeat: float = 0.0,
     ) -> Callable[[Callable[[EntityRef, Facts, Transition], Awaitable[None]]], Callable[[EntityRef, Facts, Transition], Awaitable[None]]]:
         def wrap(fn: Callable[[EntityRef, Facts, Transition], Awaitable[None]]) -> Callable[[EntityRef, Facts, Transition], Awaitable[None]]:
-            self.add(EdgeRule(name or fn.__name__, kind, requirement, on_enter=fn, settle=settle, initial=initial, mode=mode))
+            self.add(EdgeRule(name or fn.__name__, kind, requirement, on_enter=fn, settle=settle, initial=initial, mode=mode, repeat=repeat))
             return fn
 
         return wrap
@@ -249,6 +249,9 @@ class Reactor:
         if truth == record.holds:
             record.candidate = None
             record.candidate_due = None
+            if truth and rule.repeat > 0 and record.next_repeat is not None and now >= record.next_repeat:
+                await self._repeat(rule, facts, record, now)
+                return
             await self.store.put(rule.name, str(entity), record)
             return
 
@@ -274,6 +277,12 @@ class Reactor:
         kind: Literal["enter", "exit"] = "enter" if holds else "exit"
         if holds:
             record.epoch += 1
+            record.repeats = 0
+            record.next_repeat = now + rule.repeat if rule.repeat > 0 else None
+            if record.next_repeat is not None:
+                await self.timers.schedule(_key(rule.name, entity), record.next_repeat)
+        else:
+            record.next_repeat = None
         handler = rule.on_enter if holds else rule.on_exit
         if handler is None:
             await self.store.put(rule.name, str(entity), record)
@@ -286,6 +295,17 @@ class Reactor:
         log.info("reactive_transition", extra={"rule": rule.name, "entity": str(entity), "transition": kind, "id": transition.id, "acting": self._acting(rule)})
         await self._run_pending(rule, facts, record)
 
+    async def _repeat(self, rule: EdgeRule, facts: Facts, record: Record, now: float) -> None:
+        """The heartbeat of a held requirement: on_enter again, with its own id."""
+        entity = facts.entity
+        record.repeats += 1
+        record.next_repeat = now + rule.repeat
+        effect_id = f"{rule.name}:{entity}:{record.epoch}:enter:r{record.repeats}"
+        record.pending = (*record.pending, PendingEffect(effect_id, "enter"))
+        await self.store.put(rule.name, str(entity), record)
+        await self.timers.schedule(_key(rule.name, entity), record.next_repeat)
+        await self._run_pending(rule, facts, record)
+
     async def _run_pending(self, rule: EdgeRule, facts: Facts, record: Record) -> None:
         entity = facts.entity
         left: list[PendingEffect] = []
@@ -294,7 +314,7 @@ class Reactor:
             handler = rule.on_enter if effect.kind == "enter" else rule.on_exit
             if handler is None or not self._acting(rule):
                 continue
-            epoch = int(effect.id.rsplit(":", 2)[-2])
+            epoch = record.epoch
             transition = Transition(effect.id, rule.name, entity, "enter" if effect.kind == "enter" else "exit", epoch, self.clock())
             try:
                 await handler(entity, facts, transition)

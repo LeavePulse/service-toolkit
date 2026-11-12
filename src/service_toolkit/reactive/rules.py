@@ -46,6 +46,9 @@ class EdgeRule:
     settle: float = 0.0
     # "silent": the first evaluation of an entity records, never fires.
     initial: Literal["silent", "fire"] = "silent"
+    # Run on_enter again every this many seconds while the requirement holds
+    # (a heartbeat: "and every hour after, while they stay").
+    repeat: float = 0.0
     mode: Mode = "live"
 
     def fields(self) -> frozenset[str]:

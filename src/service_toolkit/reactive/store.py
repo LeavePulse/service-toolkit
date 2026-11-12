@@ -58,6 +58,9 @@ class Record(msgspec.Struct):
     pending: tuple[PendingEffect, ...] = ()
     # converge retries after a failed apply or read-back.
     attempts: int = 0
+    # repeat: when on_enter runs again while the requirement holds, and how many times it has.
+    next_repeat: float | None = None
+    repeats: int = 0
 
 
 _encoder = msgspec.json.Encoder()
