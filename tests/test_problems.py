@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from sqlalchemy import MetaData, create_engine
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import Session
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from service_toolkit.problems import (
     MemoryProblemStore,
@@ -17,6 +23,7 @@ from service_toolkit.problems import (
     Remedy,
     Waiting,
 )
+from service_toolkit.problems.sql import SqlProblemStore, problem_tables
 from service_toolkit.reactive import Fields, held_for
 
 F = Fields()
@@ -32,9 +39,34 @@ class Ids:
         return self.n
 
 
-@pytest.fixture
-def store() -> ProblemStore:
-    return MemoryProblemStore(ids=Ids())
+class _Session:
+    """Just the part of AsyncSession the store uses, over a sync Session: the
+    repo has no async SQLite driver, and the statements are what is tested."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    async def execute(self, statement: Any, params: Any = None) -> Any:
+        return self._session.execute(statement, params)
+
+
+@pytest.fixture(params=["memory", "sql"])
+def store(request: pytest.FixtureRequest) -> Iterator[ProblemStore]:
+    if request.param == "memory":
+        yield MemoryProblemStore(ids=Ids())
+        return
+    metadata = MetaData()
+    tables = problem_tables(metadata, prefix="network_")
+    engine = create_engine("sqlite://")
+    metadata.create_all(engine)
+
+    @asynccontextmanager
+    async def begin() -> AsyncIterator[Any]:
+        with Session(engine) as session, session.begin():
+            yield _Session(session)
+
+    yield SqlProblemStore(tables, begin, ids=Ids())  # type: ignore[arg-type]
+    engine.dispose()
 
 
 def road_home(**overrides: Any) -> ProblemKind:
@@ -141,3 +173,14 @@ async def test_compact_drops_old_history_of_resolved_problems(store: ProblemStor
     # Resolved recently, or still open: the history stays.
     assert await history(store, young) == ["open", "resolved"]
     assert await history(store, still) == ["open"]
+
+
+def test_tables_take_the_owners_prefix_and_compile_for_postgres() -> None:
+    metadata = MetaData()
+    tables = problem_tables(metadata, prefix="fleet_")
+    assert {t.name for t in metadata.sorted_tables} == {"fleet_problems", "fleet_problem_transitions"}
+    dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
+    assert "JSONB" in str(CreateTable(tables.problems).compile(dialect=dialect))
+    assert "UNIQUE (transition_id)" in str(CreateTable(tables.transitions).compile(dialect=dialect))
+    [open_index] = [i for i in tables.problems.indexes if i.unique]
+    assert "WHERE resolved_at IS NULL" in str(CreateIndex(open_index).compile(dialect=dialect))
