@@ -225,7 +225,7 @@ class Reactor:
         now = self.clock()
         stored = await self.store.get(rule.name, str(entity))
         if stored is not None and facts.version is not None and stored.version is not None and facts.version < stored.version:
-            log.debug("reactive_stale_facts", extra={"rule": rule.name, "entity": str(entity)})
+            log.debug("reactive_stale_facts rule=%s entity=%s", rule.name, str(entity))
             return
         record = stored or Record()
         truth, due = self._truth(rule.requirement, facts, record, now)
@@ -292,7 +292,7 @@ class Reactor:
         # same id instead of forgetting it.
         record.pending = (*record.pending, PendingEffect(transition.id, kind))
         await self.store.put(rule.name, str(entity), record)
-        log.info("reactive_transition", extra={"rule": rule.name, "entity": str(entity), "transition": kind, "id": transition.id, "acting": self._acting(rule)})
+        log.info("reactive_transition rule=%s entity=%s transition=%s id=%s acting=%s", rule.name, str(entity), kind, transition.id, self._acting(rule))
         await self._run_pending(rule, facts, record)
 
     async def _repeat(self, rule: EdgeRule, facts: Facts, record: Record, now: float) -> None:
@@ -304,6 +304,7 @@ class Reactor:
         record.pending = (*record.pending, PendingEffect(effect_id, "enter"))
         await self.store.put(rule.name, str(entity), record)
         await self.timers.schedule(_key(rule.name, entity), record.next_repeat)
+        log.info("reactive_repeat rule=%s entity=%s id=%s acting=%s", rule.name, str(entity), effect_id, self._acting(rule))
         await self._run_pending(rule, facts, record)
 
     async def _run_pending(self, rule: EdgeRule, facts: Facts, record: Record) -> None:
@@ -319,7 +320,7 @@ class Reactor:
             try:
                 await handler(entity, facts, transition)
             except Exception:
-                log.exception("reactive_effect_failed", extra={"rule": rule.name, "entity": str(entity), "id": effect.id, "attempts": effect.attempts + 1})
+                log.exception("reactive_effect_failed rule=%s entity=%s id=%s attempts=%s", rule.name, str(entity), effect.id, effect.attempts + 1)
                 left.append(PendingEffect(effect.id, effect.kind, effect.attempts + 1))
                 delay = RETRY_DELAYS[min(effect.attempts, len(RETRY_DELAYS) - 1)]
                 retry_at = min(retry_at or float("inf"), self.clock() + delay)
@@ -341,13 +342,13 @@ class Reactor:
             await self.store.put(rule.name, str(entity), record)
             return
         if not self._acting(rule):
-            log.info("reactive_converge_shadow", extra={"rule": rule.name, "entity": str(entity), "desired": repr(desired)})
+            log.info("reactive_converge_shadow rule=%s entity=%s desired=%s", rule.name, str(entity), repr(desired))
             await self.store.put(rule.name, str(entity), record)
             return
         for key in (rule.owns(entity) if rule.owns else ()):
             owner = self._owners.setdefault(key, rule.name)
             if owner != rule.name:
-                log.error("reactive_owner_conflict", extra={"rule": rule.name, "owner": owner, "key": key})
+                log.error("reactive_owner_conflict rule=%s owner=%s key=%s", rule.name, owner, key)
                 return
         observed = await rule.observe(entity)
         # Compared with what the target says it is, never with what was sent
@@ -363,10 +364,10 @@ class Reactor:
                 after = await rule.observe(entity)
                 if after is not UNKNOWN and after != desired:
                     failed = True
-                    log.error("reactive_read_back_mismatch", extra={"rule": rule.name, "entity": str(entity), "desired": repr(desired), "observed": repr(after)})
+                    log.error("reactive_read_back_mismatch rule=%s entity=%s desired=%s observed=%s", rule.name, str(entity), repr(desired), repr(after))
         except Exception:
             failed = True
-            log.exception("reactive_converge_failed", extra={"rule": rule.name, "entity": str(entity)})
+            log.exception("reactive_converge_failed rule=%s entity=%s", rule.name, str(entity))
         if failed:
             delay = RETRY_DELAYS[min(record.attempts, len(RETRY_DELAYS) - 1)]
             record.attempts += 1
@@ -460,7 +461,7 @@ class Reactor:
                 try:
                     await rule.withdraw(entity)
                 except Exception:
-                    log.exception("reactive_withdraw_failed", extra={"rule": rule.name, "entity": str(entity)})
+                    log.exception("reactive_withdraw_failed rule=%s entity=%s", rule.name, str(entity))
                     return
         elif record is not None:
             if record.holds:
@@ -478,7 +479,7 @@ class Reactor:
             else:
                 await self._edge(rule, facts)
         except Exception:
-            log.exception("reactive_evaluate_failed", extra={"rule": rule.name, "entity": str(facts.entity)})
+            log.exception("reactive_evaluate_failed rule=%s entity=%s", rule.name, str(facts.entity))
 
     async def run_timers(self) -> None:
         """Handle every due timer: a held_for that may now hold, a settle, a retry."""
@@ -508,7 +509,7 @@ class Reactor:
         for each in kinds:
             provider = self._providers[each]
             entities = await provider.entities()
-            log.info("reactive_reconcile", extra={"kind": each, "entities": len(entities)})
+            log.info("reactive_reconcile kind=%s entities=%s", each, len(entities))
             pause = 1.0 / self.reconcile_rate if self.reconcile_rate > 0 else 0.0
             pending: list[asyncio.Task[None]] = []
             for entity in entities:
