@@ -29,6 +29,8 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Literal, Protocol
 from weakref import WeakValueDictionary
 
+import msgspec
+
 from service_toolkit.time import unix_now
 
 from .expr import Expr, Explanation, HeldFor, Latch, Requirement, Truth
@@ -334,7 +336,7 @@ class Reactor:
         transition = Transition(_transition_id(rule.name, entity, record, kind), rule.name, entity, kind, record.epoch, now)
         # Written down before it runs: a crash in between retries it with the
         # same id instead of forgetting it.
-        record.pending = (*record.pending, PendingEffect(transition.id, kind))
+        record.pending = (*record.pending, PendingEffect(transition.id, kind, at=now, epoch=record.epoch))
         await self.store.put(rule.name, str(entity), record)
         log.info("reactive_transition rule=%s entity=%s transition=%s id=%s acting=%s", rule.name, str(entity), kind, transition.id, self._acting(rule))
         await self._run_pending(rule, facts, record)
@@ -345,7 +347,7 @@ class Reactor:
         record.repeats += 1
         record.next_repeat = now + rule.repeat
         effect_id = f"{_transition_id(rule.name, entity, record, 'enter')}:r{record.repeats}"
-        record.pending = (*record.pending, PendingEffect(effect_id, "enter"))
+        record.pending = (*record.pending, PendingEffect(effect_id, "enter", at=now, epoch=record.epoch))
         await self.store.put(rule.name, str(entity), record)
         await self.timers.schedule(_key(rule.name, entity), record.next_repeat)
         log.info("reactive_repeat rule=%s entity=%s id=%s acting=%s", rule.name, str(entity), effect_id, self._acting(rule))
@@ -359,13 +361,16 @@ class Reactor:
             handler = rule.on_enter if effect.kind == "enter" else rule.on_exit
             if handler is None or not self._acting(rule):
                 continue
-            epoch = record.epoch
-            transition = Transition(effect.id, rule.name, entity, "enter" if effect.kind == "enter" else "exit", epoch, self.clock())
+            transition = Transition(
+                effect.id, rule.name, entity, "enter" if effect.kind == "enter" else "exit",
+                record.epoch if effect.epoch is None else effect.epoch,
+                self.clock() if effect.at is None else effect.at,
+            )
             try:
                 await handler(entity, facts, transition)
             except Exception:
                 log.exception("reactive_effect_failed rule=%s entity=%s id=%s attempts=%s", rule.name, str(entity), effect.id, effect.attempts + 1)
-                left.append(PendingEffect(effect.id, effect.kind, effect.attempts + 1))
+                left.append(msgspec.structs.replace(effect, attempts=effect.attempts + 1))
                 delay = RETRY_DELAYS[min(effect.attempts, len(RETRY_DELAYS) - 1)]
                 retry_at = min(retry_at or float("inf"), self.clock() + delay)
         record.pending = tuple(left)

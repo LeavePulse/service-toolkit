@@ -36,6 +36,11 @@ class PendingEffect(msgspec.Struct, frozen=True):
     id: str
     kind: str  # "enter" | "exit"
     attempts: int = 0
+    # When the crossing happened and its epoch, so a retry tells the handler
+    # the same moment. None in an effect written before these existed: the
+    # retry then falls back to the time of the retry and the record's epoch.
+    at: float | None = None
+    epoch: int | None = None
 
 
 class Record(msgspec.Struct):

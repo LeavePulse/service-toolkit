@@ -5,6 +5,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+import msgspec
 import pytest
 
 from service_toolkit.reactive import (
@@ -16,6 +17,7 @@ from service_toolkit.reactive import (
     Gone,
     MemoryStore,
     MemoryTimers,
+    PendingEffect,
     Reactor,
     Record,
     Transition,
@@ -717,3 +719,44 @@ async def test_a_record_from_before_generations_gets_one_and_keeps_it() -> None:
     record = await reactor.store.get("joined", "member:1")
     assert record is not None and record.generation is not None
     assert ids == [f"joined:member:1:{record.generation}-5:enter"]
+
+
+@pytest.mark.asyncio
+async def test_a_retried_effect_keeps_the_moment_and_epoch_of_its_crossing() -> None:
+    reactor, members, clock = make()
+    seen: list[Transition] = []
+
+    @reactor.on_exit(F.voice.present(), kind=M)
+    async def left(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(t)
+        if len(seen) == 1:
+            raise RuntimeError("discord said no")
+
+    await reactor.changed(facts("1", voice="a"))
+    await reactor.changed(facts("1", voice=None))
+    crossed = clock.now
+    clock.now += 10
+    # Entered again before the retry: the epoch moved on, the exit's did not.
+    await reactor.changed(facts("1", voice="a"))
+    members.data["1"] = {"voice": "a"}
+    await reactor.run_timers()
+    assert len(seen) == 2 and seen[0].id == seen[1].id
+    assert seen[1].at == crossed and seen[1].epoch == seen[0].epoch
+
+
+@pytest.mark.asyncio
+async def test_a_pending_effect_from_before_at_retries_at_the_time_of_retry() -> None:
+    old = msgspec.json.decode(b'{"id": "joined:member:1:1:enter", "kind": "enter", "attempts": 1}', type=PendingEffect)
+    assert (old.at, old.epoch) == (None, None)
+    reactor, members, clock = make()
+    seen: list[Transition] = []
+
+    @reactor.on_enter(F.voice.present(), kind=M)
+    async def joined(entity: EntityRef, f: Facts, t: Transition) -> None:
+        seen.append(t)
+
+    members.data["1"] = {"voice": "a"}
+    await reactor.store.put("joined", "member:1", Record(holds=True, since=1.0, epoch=3, generation="ab", pending=(old,)))
+    await reactor.timers.schedule("joined|member:1", clock.now)
+    await reactor.run_timers()
+    assert [(t.id, t.at, t.epoch) for t in seen] == [("joined:member:1:1:enter", clock.now, 3)]
