@@ -14,7 +14,7 @@ tools, and Redis, for services. Keys go through the toolkit's ``Keyspace``.
 from __future__ import annotations
 
 import time
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import msgspec
 
@@ -48,6 +48,11 @@ class Record(msgspec.Struct):
 
     # None until the first evaluation that was not UNKNOWN.
     holds: bool | None = None
+    # Why ``holds`` is not a decision to act on right now: "unknown" when the
+    # latest evaluation had no data, "waiting" when a held_for's inner
+    # requirement holds but the hold is not served yet (``holds`` is then
+    # False). None when ``holds`` is current. See ``decided``.
+    undecided: Literal["unknown", "waiting"] | None = None
     since: float = 0.0
     # Bumps on every enter; part of the transition id.
     epoch: int = 0
@@ -74,6 +79,12 @@ class Record(msgspec.Struct):
     # repeat: when on_enter runs again while the requirement holds, and how many times it has.
     next_repeat: float | None = None
     repeats: int = 0
+
+
+    @property
+    def decided(self) -> bool:
+        """``holds`` is a current decision that a reader may act on."""
+        return self.holds is not None and self.undecided is None
 
 
 _encoder = msgspec.json.Encoder()

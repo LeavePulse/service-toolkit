@@ -157,7 +157,7 @@ async def reconcile(
 
 async def _reconcile_one(reactor: Reactor, kind: ProblemKind, store: ProblemStore, entity: EntityRef, report: ReconcileReport) -> None:
     record = await reactor.store.get(kind.rule_name, str(entity))
-    if record is None or record.holds is None or record.pending:
+    if record is None or not record.decided or record.pending:
         return
     moment = reactor.clock()
     crossing = f"{kind.rule_name}:{entity}:{record.generation}-{record.epoch}"

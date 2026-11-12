@@ -415,3 +415,16 @@ async def test_a_restart_keeps_an_open_held_problem(store: ProblemStore) -> None
     [problem] = await store.open_problems()
     assert await history(store, problem) == ["open"]
     assert len(await store.recent()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_restart_without_reactive_state_keeps_an_open_held_problem(store: ProblemStore) -> None:
+    # The new reactor starts the hold over; "true but not served yet" is no
+    # decision, so the open problem is neither resolved nor opened again.
+    reactor, feed, clock, kind = await open_held_then_restart(store, lose_reactive_store=True)
+    clock.now += 31
+    await feed.push({"a": {"road_home": False}})
+    await reconcile(reactor, [kind], store)
+    [problem] = await store.open_problems()
+    assert await history(store, problem) == ["open"]
+    assert len(await store.recent()) == 1

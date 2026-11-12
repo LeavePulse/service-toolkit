@@ -839,3 +839,34 @@ async def test_a_served_hold_keeps_holding_while_its_facts_do() -> None:
     record = await store.get("out", "member:1")
     assert record is not None and record.holds is True
     assert log == ["enter 1"]
+
+
+@pytest.mark.asyncio
+async def test_true_but_not_served_is_waiting_and_no_data_is_unknown() -> None:
+    reactor, members, clock = make()
+    log: list[str] = []
+    edge_log(reactor, held_for(F.voice.present(), minutes=5), log)
+
+    async def record() -> Record:
+        found = await reactor.store.get("out", "member:1")
+        assert found is not None
+        return found
+
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    first = await record()
+    assert (first.holds, first.undecided, first.decided) == (False, "waiting", False)
+    del members.data["1"]
+    await reactor.refresh(members.ref("1"))
+    assert ((await record()).undecided, (await record()).decided) == ("unknown", False)
+    members.data["1"] = {"voice": "a"}
+    await reactor.refresh(members.ref("1"))
+    assert (await record()).undecided == "waiting"
+    clock.now += 301
+    await reactor.run_timers()
+    served = await record()
+    assert (served.holds, served.undecided, served.decided) == (True, None, True)
+    await reactor.changed(facts("1", voice=None))
+    left = await record()
+    assert (left.holds, left.undecided, left.decided) == (False, None, True)
+    assert log == ["enter 1", "exit 1"]

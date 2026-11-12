@@ -290,8 +290,11 @@ class Reactor:
             await self.timers.schedule(_key(rule.name, entity), self._jittered(due, now))
 
         if truth is UNKNOWN:
+            record.undecided = "unknown"
             await self.store.put(rule.name, str(entity), record)
             return
+        waiting = isinstance(rule.requirement, HeldFor) and truth is False and record.run_since is not None
+        record.undecided = "waiting" if waiting else None
 
         if stored is None or stored.holds is None:
             record.holds = bool(truth)
@@ -327,6 +330,7 @@ class Reactor:
         entity = facts.entity
         record = _new_record(record)
         record.holds = holds
+        record.undecided = None
         record.since = now
         record.candidate = None
         record.candidate_due = None
@@ -503,12 +507,15 @@ class Reactor:
                     await self._pause(rule, entity)
 
     async def _pause(self, rule: EdgeRule, entity: EntityRef) -> None:
-        if not isinstance(rule.requirement, HeldFor):
-            return
         record = await self.store.get(rule.name, str(entity))
-        if record is None or record.run_since is None or record.paused_at is not None:
+        if record is None:
             return
-        record.paused_at = self.clock()
+        paused = isinstance(rule.requirement, HeldFor) and record.run_since is not None and record.paused_at is None
+        if not paused and record.undecided == "unknown":
+            return
+        if paused:
+            record.paused_at = self.clock()
+        record.undecided = "unknown"
         await self.store.put(rule.name, str(entity), record)
 
     async def gone(self, entity: EntityRef) -> None:
