@@ -122,8 +122,13 @@ Rules for what a pass sends:
 - **Reconcile after the pass.** Edge delivery is at least once, and reactive's
   store can be lost along with an exit. `reconcile` compares each rule's
   recorded state with the store, opens what holds but is missing and resolves
-  what no longer holds. A rule with no decision yet, or an effect still being
-  retried, is left alone. Each subject is checked under `reactor.locked`, so
+  what no longer holds. It acts only on a decided record (`Record.decided`):
+  one that has no data right now (`undecided="unknown"`), or whose facts are
+  true while its `hold` is not served yet (`undecided="waiting"`), is left
+  alone, as is an effect still being retried. A restart therefore never
+  resolves an open held problem: a record that held keeps holding while its
+  facts stay true, and one that starts the hold over (its reactive store was
+  lost) is waiting, not false. Each subject is checked under `reactor.locked`, so
   it never races the engine; the facts to phrase a new problem come from
   `reactor.provider(subject)`. The `on_reconciled` hook in the wiring above
   runs the same check after reactive's own reconciles (start, leadership
