@@ -802,3 +802,40 @@ async def test_outside_work_under_locked_runs_one_at_a_time_with_the_engine() ->
         seen.append("outside")
     await task
     assert seen == ["outside", "enter"]
+
+
+@pytest.mark.asyncio
+async def test_a_served_hold_keeps_holding_while_its_facts_do() -> None:
+    hold = {"minutes": 5.0}
+    log: list[str] = []
+    store, timers = MemoryStore(), MemoryTimers()
+    clock = Clock()
+    members = Members()
+
+    def boot() -> Reactor:
+        reactor = Reactor(store=store, timers=timers, clock=clock, jitter=0, reconcile_rate=0)
+        reactor.provide(M, members)
+        edge_log(reactor, held_for(F.voice.present(), seconds=lambda: hold["minutes"] * 60), log)
+        return reactor
+
+    reactor = boot()
+    members.data["1"] = {"voice": None}
+    await reactor.changed(facts("1", voice=None))
+    members.data["1"] = {"voice": "a"}
+    await reactor.changed(facts("1", voice="a"))
+    clock.now += 301
+    await reactor.run_timers()
+    assert log == ["enter 1"]
+    # A restart: a new reactor over the same store, a provider with no facts
+    # yet, and then a longer configured hold. The crossing stands.
+    reactor = boot()
+    del members.data["1"]
+    await reactor.reconcile()
+    clock.now += 60
+    hold["minutes"] = 60
+    members.data["1"] = {"voice": "a"}
+    await reactor.reconcile()
+    await reactor.changed(facts("1", voice="a"))
+    record = await store.get("out", "member:1")
+    assert record is not None and record.holds is True
+    assert log == ["enter 1"]

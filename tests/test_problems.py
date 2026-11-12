@@ -386,3 +386,32 @@ async def test_uninstall_keeps_open_problems(store: ProblemStore) -> None:
     await feed.push({"a": {"road_home": False}})
     [problem] = await store.open_problems()
     assert await history(store, problem) == ["open"]
+
+
+async def open_held_then_restart(store: ProblemStore, *, lose_reactive_store: bool) -> tuple[Reactor, SnapshotFeed, Clock, ProblemKind]:
+    """A held problem is open; the service restarts (a new Reactor over the same
+    reactive store, or a fresh one), reconciles before its first pass, then passes."""
+    kind = road_home(hold=30)
+    reactor, feed, clock = world(store, kind)
+    await feed.push({"a": {"road_home": False}})
+    clock.now += 31
+    await feed.push({"a": {"road_home": False}})
+    assert len(await store.open_problems()) == 1
+    clock.now += 100
+    reactive = MemoryStore() if lose_reactive_store else reactor.store
+    reactor = Reactor(store=reactive, timers=reactor.timers, clock=clock, jitter=0, reconcile_rate=0)
+    feed = SnapshotFeed(reactor, H)
+    install(reactor, [kind], store)
+    await reactor.reconcile()
+    await reconcile(reactor, [kind], store)
+    await feed.push({"a": {"road_home": False}})
+    await reconcile(reactor, [kind], store)
+    return reactor, feed, clock, kind
+
+
+@pytest.mark.asyncio
+async def test_a_restart_keeps_an_open_held_problem(store: ProblemStore) -> None:
+    await open_held_then_restart(store, lose_reactive_store=False)
+    [problem] = await store.open_problems()
+    assert await history(store, problem) == ["open"]
+    assert len(await store.recent()) == 1
