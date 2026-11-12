@@ -13,7 +13,7 @@ The core knows no platform: an adapter turns a platform's events into
 
 from __future__ import annotations
 
-from .engine import Provider, Reactor
+from .engine import Provider, Reactor, ReconciledHook
 from .expr import Explanation, Expr, Field, Fields, HeldFor, Latch, Requirement, Truth, held_for, latch
 from .facts import GONE, UNKNOWN, EntityRef, Facts, Gone, Unknown
 from .rules import ConvergeRule, EdgeRule, Mode, Transition
@@ -39,6 +39,7 @@ __all__ = [
     "PendingEffect",
     "Provider",
     "Reactor",
+    "ReconciledHook",
     "Record",
     "RedisStore",
     "RedisTimers",

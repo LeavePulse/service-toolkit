@@ -36,7 +36,7 @@ from .facts import GONE, UNKNOWN, EntityRef, Facts, Gone
 from .rules import ConvergeRule, EdgeRule, Mode, Transition
 from .store import PendingEffect, Record, Timers, TransitionStore
 
-__all__ = ["Provider", "Reactor"]
+__all__ = ["Provider", "Reactor", "ReconciledHook"]
 
 log = logging.getLogger("service_toolkit.reactive")
 
@@ -67,6 +67,9 @@ class Provider(Protocol):
 
 
 Rule = ConvergeRule | EdgeRule
+
+# Told the kind and every entity its provider listed, after a reconcile of that kind.
+ReconciledHook = Callable[[str, frozenset[EntityRef]], Awaitable[None]]
 
 
 def _key(rule: str, entity: EntityRef) -> str:
@@ -107,6 +110,7 @@ class Reactor:
         self._rules: dict[str, Rule] = {}
         self._index: dict[str, dict[str, list[str]]] = {}
         self._owners: dict[str, str] = {}
+        self._reconciled: dict[str, list[ReconciledHook]] = {}
         self._locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._slots = asyncio.Semaphore(concurrency)
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -117,6 +121,20 @@ class Reactor:
 
     def provide(self, kind: str, provider: Provider) -> None:
         self._providers[kind] = provider
+
+    def on_reconciled(self, kind: str, callback: ReconciledHook) -> Callable[[], None]:
+        """Call ``callback(kind, entities)`` after every reconcile of ``kind`` (start,
+        leadership gained, periodic resync), for a consumer that keeps its own
+        state in step with the rules. A failure is logged and changes nothing
+        else. Returns a function that unregisters it."""
+        hooks = self._reconciled.setdefault(kind, [])
+        hooks.append(callback)
+
+        def cancel() -> None:
+            if callback in hooks:
+                hooks.remove(callback)
+
+        return cancel
 
     def add(self, rule: Rule) -> Rule:
         if rule.name in self._rules:
@@ -571,6 +589,15 @@ class Reactor:
             for ident in unlisted:
                 k, _, rest = ident.partition(":")
                 await self.refresh(EntityRef(k, rest))
+            if self.is_leader():
+                await self._notify_reconciled(each, frozenset(entities))
+
+    async def _notify_reconciled(self, kind: str, entities: frozenset[EntityRef]) -> None:
+        for hook in list(self._reconciled.get(kind, ())):
+            try:
+                await hook(kind, entities)
+            except Exception:
+                log.exception("reactive_reconciled_hook_failed kind=%s", kind)
 
     async def _reconcile_one(self, entity: EntityRef) -> None:
         async with self._slots:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from typing import Any
 
@@ -651,3 +652,31 @@ async def test_held_for_pauses_while_the_provider_has_no_facts() -> None:
     clock.now += 20
     await reactor.run_timers()
     assert log == ["enter 1"]
+
+
+@pytest.mark.asyncio
+async def test_on_reconciled_runs_after_each_reconcile_and_survives_a_failure() -> None:
+    reactor, members, _ = make(tick=0.01)
+    calls: list[tuple[str, frozenset[EntityRef]]] = []
+
+    async def broken(kind: str, entities: frozenset[EntityRef]) -> None:
+        raise RuntimeError("consumer bug")
+
+    async def hook(kind: str, entities: frozenset[EntityRef]) -> None:
+        calls.append((kind, entities))
+
+    reactor.on_reconciled(M, broken)
+    cancel = reactor.on_reconciled(M, hook)
+    reactor.on_reconciled("room", hook)
+    members.data = {"1": {"voice": None}}
+    # The reactor's own reconcile, on start.
+    await reactor.start()
+    for _ in range(100):
+        if calls:
+            break
+        await asyncio.sleep(0.01)
+    await reactor.stop()
+    assert calls == [(M, frozenset({members.ref("1")}))]
+    cancel()
+    await reactor.reconcile()
+    assert len(calls) == 1
