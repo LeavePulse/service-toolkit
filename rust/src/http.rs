@@ -145,7 +145,10 @@ pub struct HttpError {
 pub enum HttpErrorKind {
     Config(String),
     Transport(reqwest::Error),
-    Status { status: StatusCode, body: String },
+    Status {
+        status: StatusCode,
+        body: String,
+    },
     /// A `304` arrived for a request that carried no validator and asked every
     /// cache to stand aside: nothing can produce the body.
     StaleValidator,
@@ -217,7 +220,10 @@ fn retry_after(response: &Response) -> Option<Duration> {
         return Some(Duration::from_secs(seconds));
     }
     let at = httpdate::parse_http_date(value).ok()?;
-    Some(at.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO))
+    Some(
+        at.duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO),
+    )
 }
 
 impl Client {
@@ -264,8 +270,8 @@ impl Client {
                         status,
                         StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
                     );
-                    let wait = retry_after(&response)
-                        .unwrap_or_else(|| self.retries.backoff(attempt));
+                    let wait =
+                        retry_after(&response).unwrap_or_else(|| self.retries.backoff(attempt));
                     if spare.is_none() || !throttled || !replayable || wait > self.retries.max_wait
                     {
                         let body = response.text().await.unwrap_or_default();

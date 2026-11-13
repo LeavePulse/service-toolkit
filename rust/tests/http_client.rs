@@ -36,7 +36,10 @@ async fn serve(reply: Reply) -> (String, Arc<AtomicUsize>, Arc<std::sync::Mutex<
 }
 
 fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
-    let mut out = format!("HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n", body.len());
+    let mut out = format!(
+        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n",
+        body.len()
+    );
     for (k, v) in headers {
         out.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -67,14 +70,21 @@ async fn throttled_get_waits_and_retries() {
     })
     .await;
     let client = quick().build().unwrap();
-    let body = client.send(client.get(&url)).await.unwrap().bytes().await.unwrap();
+    let body = client
+        .send(client.get(&url))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
     assert_eq!(&body[..], b"ok");
     assert_eq!(hits.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
 async fn post_is_not_replayed_and_error_names_the_url() {
-    let (url, hits, _) = serve(|_, _| response("503 Service Unavailable", &[("retry-after", "0")], b"down")).await;
+    let (url, hits, _) =
+        serve(|_, _| response("503 Service Unavailable", &[("retry-after", "0")], b"down")).await;
     let client = quick().build().unwrap();
     let error = client
         .send(client.request(Method::POST, &url).body("x"))
@@ -87,7 +97,8 @@ async fn post_is_not_replayed_and_error_names_the_url() {
 
 #[tokio::test]
 async fn retry_after_beyond_max_wait_gives_up() {
-    let (url, hits, _) = serve(|_, _| response("429 Too Many Requests", &[("retry-after", "3600")], b"")).await;
+    let (url, hits, _) =
+        serve(|_, _| response("429 Too Many Requests", &[("retry-after", "3600")], b"")).await;
     let client = quick().build().unwrap();
     assert!(client.send(client.get(&url)).await.is_err());
     assert_eq!(hits.load(Ordering::SeqCst), 1);
@@ -105,8 +116,14 @@ async fn conditional_get_reuses_the_stored_body() {
     .await;
     let client = quick().build().unwrap();
     let store = MemoryEtagStore::default();
-    assert_eq!(&client.conditional_get(&url, &store).await.unwrap().unwrap()[..], b"payload");
-    assert_eq!(&client.conditional_get(&url, &store).await.unwrap().unwrap()[..], b"payload");
+    assert_eq!(
+        &client.conditional_get(&url, &store).await.unwrap().unwrap()[..],
+        b"payload"
+    );
+    assert_eq!(
+        &client.conditional_get(&url, &store).await.unwrap().unwrap()[..],
+        b"payload"
+    );
     assert_eq!(hits.load(Ordering::SeqCst), 2);
 }
 
@@ -131,7 +148,13 @@ async fn not_modified_without_a_stored_body_is_recovered() {
 async fn missing_resource_is_none() {
     let (url, _, _) = serve(|_, _| response("404 Not Found", &[], b"")).await;
     let client = quick().build().unwrap();
-    assert!(client.conditional_get(&url, &MemoryEtagStore::default()).await.unwrap().is_none());
+    assert!(
+        client
+            .conditional_get(&url, &MemoryEtagStore::default())
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -144,13 +167,25 @@ async fn encodings_are_negotiated_or_refused() {
     })
     .await;
     let negotiated = quick().build().unwrap();
-    let body = negotiated.send(negotiated.get(&url)).await.unwrap().bytes().await.unwrap();
+    let body = negotiated
+        .send(negotiated.get(&url))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
     assert_eq!(&body[..], b"decoded");
     assert!(seen.lock().unwrap()[0].contains("zstd"));
     let mut identity = quick();
     identity.encoding = Encoding::Identity;
     let client = identity.build().unwrap();
-    let body = client.send(client.get(&url)).await.unwrap().bytes().await.unwrap();
+    let body = client
+        .send(client.get(&url))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
     assert_eq!(&body[..], b"plain");
 }
 
@@ -173,11 +208,31 @@ async fn against_a_real_transfer_server() {
     let mut plain = quick();
     plain.encoding = Encoding::Identity;
     let plain = plain.build().unwrap();
-    let a = negotiated.send(negotiated.get(&url)).await.unwrap().bytes().await.unwrap();
-    let b = plain.send(plain.get(&url)).await.unwrap().bytes().await.unwrap();
+    let a = negotiated
+        .send(negotiated.get(&url))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let b = plain
+        .send(plain.get(&url))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
     assert_eq!(a, b);
     let store = MemoryEtagStore::default();
-    let first = negotiated.conditional_get(&url, &store).await.unwrap().unwrap();
-    let second = negotiated.conditional_get(&url, &store).await.unwrap().unwrap();
+    let first = negotiated
+        .conditional_get(&url, &store)
+        .await
+        .unwrap()
+        .unwrap();
+    let second = negotiated
+        .conditional_get(&url, &store)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first, second);
 }
