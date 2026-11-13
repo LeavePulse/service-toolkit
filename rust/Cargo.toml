@@ -36,6 +36,17 @@ runtime = [
 # decoding, retries with Retry-After, conditional GET over an ETag store.
 # Portable (no unix-only code), so desktop and mobile consumers can take it.
 http = ["dep:reqwest", "dep:bytes", "dep:httpdate", "dep:tokio", "tokio/time"]
+# Atomic file replacement (sibling + fsync + rename + directory fsync, private
+# and executable modes, write-if-changed) and JSON state load/save. Portable.
+fs = ["dep:serde", "dep:serde_json"]
+# SHA-1/SHA-256/SHA-512 as hex, one-shot, streaming and over files. Portable.
+digest = ["dep:sha1", "dep:sha2"]
+# Streamed downloads that land atomically only on a digest match, over the
+# `http` client. Portable.
+download = ["http", "fs", "digest", "tokio/fs", "tokio/io-util", "tokio/rt"]
+# flock-based named locks and a process singleton. Unix only: on other targets
+# the feature compiles to nothing.
+lock = ["dep:libc"]
 # Native `lp-ci` binary for Rust repos. No extra deps — the CI engine is pure
 # std — so this builds standalone with `--no-default-features --features cli`.
 cli = []
@@ -65,6 +76,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "zstd"], optional = true }
 bytes = { version = "1", optional = true }
 httpdate = { version = "1", optional = true }
+
+# `fs`, `digest` and `lock` feature deps. Versions match control-agent and the
+# launcher.
+serde = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+libc = { version = "0.2", optional = true }
 
 # Native CI gate for Rust consumers. Gated behind `cli` so the default
 # (maturin/python) and grpc builds don't produce it.

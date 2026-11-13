@@ -36,6 +36,22 @@ pub mod grpc;
 #[cfg(feature = "http")]
 pub mod http;
 
+/// Atomic file replacement and JSON state files (`fs` feature).
+#[cfg(feature = "fs")]
+pub mod fs;
+
+/// SHA-1/SHA-256/SHA-512 hex digests (`digest` feature).
+#[cfg(feature = "digest")]
+pub mod digest;
+
+/// Digest-verified atomic downloads (`download` feature).
+#[cfg(feature = "download")]
+pub mod download;
+
+/// flock named locks and a process singleton (`lock` feature, unix only).
+#[cfg(all(feature = "lock", unix))]
+pub mod lock;
+
 // Runtime helpers for Rust services (node agent, poller): env-config parsing,
 // tracing init, a Prometheus `/metrics` server, a typed subprocess runner, and
 // wall-clock helpers. Pure-Rust, no Python dep; gated behind `runtime`.
