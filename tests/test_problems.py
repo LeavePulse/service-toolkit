@@ -140,6 +140,16 @@ def test_actions_round_trip_as_tagged_json() -> None:
     assert msgspec.to_builtins(Waiting(for_="handshake"))["for"] == "handshake"
 
 
+def test_the_vocabulary_tuples_are_the_literals_and_the_action_tags() -> None:
+    from typing import get_args
+
+    from service_toolkit.problems import ACTION_TYPES, SEVERITIES, Action, ActionType, Severity
+
+    assert SEVERITIES == ("info", "warning", "critical") == get_args(Severity)
+    assert ACTION_TYPES == get_args(ActionType)
+    assert {variant.__struct_config__.tag for variant in get_args(Action)} == set(ACTION_TYPES)
+
+
 # ── store ──────────────────────────────────────────────────────────────
 
 

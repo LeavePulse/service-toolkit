@@ -19,15 +19,18 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import msgspec
 
 from service_toolkit.reactive import UNKNOWN, Explanation, Expr, Facts, HeldFor, Latch, Mode, Requirement, Truth, Unknown, held_for
 
 __all__ = [
+    "ACTION_TYPES",
     "GENERATION_FIELD",
+    "SEVERITIES",
     "Action",
+    "ActionType",
     "NeedsOperator",
     "Nothing",
     "Problem",
@@ -42,6 +45,11 @@ __all__ = [
 ]
 
 Severity = Literal["info", "warning", "critical"]
+#: The severities, lowest first, as values (the Literal's own arguments).
+SEVERITIES: tuple[Severity, ...] = get_args(Severity)
+#: The ``type`` tag of each ``Action`` variant.
+ActionType = Literal["remedy", "waiting", "needs_operator", "nothing"]
+ACTION_TYPES: tuple[ActionType, ...] = get_args(ActionType)
 ProblemState = Literal["open", "updated", "resolved"]
 
 #: The fact a subject's desired-state generation is read from. A subject whose

@@ -20,8 +20,11 @@ from typing import Any
 
 from .feed import SnapshotFeed
 from .model import (
+    ACTION_TYPES,
     GENERATION_FIELD,
+    SEVERITIES,
     Action,
+    ActionType,
     NeedsOperator,
     Nothing,
     Problem,
@@ -38,8 +41,11 @@ from .store import MemoryProblemStore, ProblemEvent, ProblemStore
 from .wiring import ReconcileReport, install, reconcile, uninstall
 
 __all__ = [
+    "ACTION_TYPES",
     "GENERATION_FIELD",
+    "SEVERITIES",
     "Action",
+    "ActionType",
     "MemoryProblemStore",
     "NeedsOperator",
     "Nothing",
