@@ -133,19 +133,22 @@ def test_actions_round_trip_as_tagged_json() -> None:
 
     from service_toolkit.problems import Action
 
-    for action in (Remedy("rehand", ts(5)), Waiting(for_="handshake"), NeedsOperator("hosts.rekey", "Re-key"), Nothing()):
+    for action in (Remedy("rehand", ts(5)), Waiting(for_="handshake", waiting_id="peer.handshake"), NeedsOperator("hosts.rekey", "Re-key"), Nothing()):
         data = msgspec.to_builtins(action)
         assert "type" in data
         assert msgspec.convert(data, Action) == action  # type: ignore[arg-type]
     assert msgspec.to_builtins(Waiting(for_="handshake"))["for"] == "handshake"
+    stored_before_the_id = {"type": "waiting", "for": "handshake", "until": None}
+    assert msgspec.convert(stored_before_the_id, Action) == Waiting(for_="handshake")  # type: ignore[arg-type]
 
 
 def test_the_vocabulary_tuples_are_the_literals_and_the_action_tags() -> None:
     from typing import get_args
 
-    from service_toolkit.problems import ACTION_TYPES, SEVERITIES, Action, ActionType, Severity
+    from service_toolkit.problems import ACTION_TYPES, PROBLEM_STATES, SEVERITIES, Action, ActionType, ProblemState, Severity
 
     assert SEVERITIES == ("info", "warning", "critical") == get_args(Severity)
+    assert PROBLEM_STATES == ("open", "updated", "resolved") == get_args(ProblemState)
     assert ACTION_TYPES == get_args(ActionType)
     assert {variant.__struct_config__.tag for variant in get_args(Action)} == set(ACTION_TYPES)
 

@@ -16,7 +16,7 @@ follow Kubernetes conditions:
 | `subject_kind`, `subject_id` | what it is about (`host` / `vps-1`, `edge` / `a-b`) |
 | `severity` | `info`, `warning` or `critical` |
 | `message` | the sentence a person reads |
-| `action` | what the system is doing: `Remedy(kind, at)`, `Waiting(for_, until)`, `NeedsOperator(action_id, label)` or `Nothing()`; stored as JSON tagged by `type` |
+| `action` | what the system is doing: `Remedy(kind, at)`, `Waiting(for_, until, waiting_id)`, `NeedsOperator(action_id, label)` or `Nothing()`; stored as JSON tagged by `type` |
 | `evidence` | a small JSON object, by default every fact the requirement read |
 | `first_seen` | when it opened |
 | `last_transition` | when it last **changed** (opened, updated, resolved) |

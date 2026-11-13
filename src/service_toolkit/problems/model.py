@@ -28,6 +28,7 @@ from service_toolkit.reactive import UNKNOWN, Explanation, Expr, Facts, HeldFor,
 __all__ = [
     "ACTION_TYPES",
     "GENERATION_FIELD",
+    "PROBLEM_STATES",
     "SEVERITIES",
     "Action",
     "ActionType",
@@ -51,6 +52,7 @@ SEVERITIES: tuple[Severity, ...] = get_args(Severity)
 ActionType = Literal["remedy", "waiting", "needs_operator", "nothing"]
 ACTION_TYPES: tuple[ActionType, ...] = get_args(ActionType)
 ProblemState = Literal["open", "updated", "resolved"]
+PROBLEM_STATES: tuple[ProblemState, ...] = get_args(ProblemState)
 
 #: The fact a subject's desired-state generation is read from. A subject whose
 #: facts carry it lets a reader tell "not seen yet" from "seen and failing".
@@ -70,10 +72,16 @@ class Remedy(msgspec.Struct, frozen=True, tag_field="type", tag="remedy"):
 
 
 class Waiting(msgspec.Struct, frozen=True, tag_field="type", tag="waiting"):
-    """Nothing to do yet: the system waits for something (a handshake, a lease)."""
+    """Nothing to do yet: the system waits for something (a handshake, a lease).
+
+    ``for_`` says what in a sentence; ``waiting_id`` names it as a stable key
+    (the counterpart of ``NeedsOperator.action_id``), so a panel can word it
+    itself. Empty in what was stored before it existed.
+    """
 
     for_: str = msgspec.field(name="for")
     until: datetime | None = None
+    waiting_id: str = ""
 
 
 class NeedsOperator(msgspec.Struct, frozen=True, tag_field="type", tag="needs_operator"):

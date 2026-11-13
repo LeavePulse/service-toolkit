@@ -22,6 +22,7 @@ from .feed import SnapshotFeed
 from .model import (
     ACTION_TYPES,
     GENERATION_FIELD,
+    PROBLEM_STATES,
     SEVERITIES,
     Action,
     ActionType,
@@ -43,6 +44,7 @@ from .wiring import ReconcileReport, install, reconcile, uninstall
 __all__ = [
     "ACTION_TYPES",
     "GENERATION_FIELD",
+    "PROBLEM_STATES",
     "SEVERITIES",
     "Action",
     "ActionType",
