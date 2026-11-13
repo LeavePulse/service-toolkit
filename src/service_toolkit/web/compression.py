@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import math
 import re
 import zlib
 from collections import OrderedDict
@@ -47,7 +48,7 @@ from litestar.types import (
     Send,
 )
 
-from .asgi_headers import header
+from .asgi_headers import header, header_list
 
 try:
     import brotli as _brotli
@@ -59,9 +60,25 @@ class _Stream(Protocol):
     def chunk(self, data: bytes, *, last: bool) -> bytes: ...
 
 
+#: Window of a streaming compressor. Every open stream (an SSE subscriber)
+#: holds one compressor for its whole life; at default windows zstd keeps
+#: ~800 KiB and brotli ~440 KiB per connection, so 10k subscribers would cost
+#: gigabytes. Events are small and a 128 KiB window loses nothing on them.
+_STREAM_WINDOW_LOG = 17
+
+#: Bodies above this are compressed off the event loop even at the fast level:
+#: gzip-5 on 5 MB holds the loop for ~100 ms.
+_OFFLOAD_BYTES = 256 * 1024
+
+
 class _Zstd:
     def __init__(self, level: int) -> None:
-        self._c = zstd.ZstdCompressor(level=level)
+        self._c = zstd.ZstdCompressor(
+            options={
+                zstd.CompressionParameter.compression_level: level,
+                zstd.CompressionParameter.window_log: _STREAM_WINDOW_LOG,
+            }
+        )
 
     def chunk(self, data: bytes, *, last: bool) -> bytes:
         if last:
@@ -71,7 +88,7 @@ class _Zstd:
 
 class _Gzip:
     def __init__(self, level: int) -> None:
-        self._c = zlib.compressobj(level, zlib.DEFLATED, 31)
+        self._c = zlib.compressobj(level, zlib.DEFLATED, 31, memLevel=6)
 
     def chunk(self, data: bytes, *, last: bool) -> bytes:
         out = self._c.compress(data)
@@ -90,7 +107,7 @@ class _Codec:
 def _brotli_codec(module: ModuleType) -> _Codec:
     class _Brotli:
         def __init__(self, level: int) -> None:
-            self._c = module.Compressor(quality=level)
+            self._c = module.Compressor(quality=level, lgwin=_STREAM_WINDOW_LOG + 1)
 
         def chunk(self, data: bytes, *, last: bool) -> bytes:
             out: bytes = self._c.process(data)
@@ -100,7 +117,10 @@ def _brotli_codec(module: ModuleType) -> _Codec:
         out: bytes = module.compress(data, quality=level)
         return out
 
-    return _Codec(b"br", _Brotli, whole, fast=4, best=11)
+    # q10, not q11: on a 3.9 MB bundle q11 takes 7.3 s for 1.5% less, and a
+    # pass that long can outlive Docker's stop grace on a shutdown right after
+    # a deploy.
+    return _Codec(b"br", _Brotli, whole, fast=4, best=10)
 
 
 _CODECS: dict[bytes, _Codec] = {
@@ -150,6 +170,7 @@ def negotiate(accept_encoding: bytes | None, available: Sequence[bytes]) -> byte
                     q = float(value)
                 except ValueError:
                     q = 0.0
+                q = min(max(q, 0.0), 1.0) if math.isfinite(q) else 0.0
         weights[token] = q
     star = weights.get(b"*")
     best: bytes | None = None
@@ -238,7 +259,7 @@ class CompressionMiddleware:
             return
 
         encoding = negotiate(
-            header(scope["headers"], b"accept-encoding"), self._available
+            header_list(scope["headers"], b"accept-encoding"), self._available
         )
         response = _Response(
             send,
@@ -271,7 +292,7 @@ class CompressionMiddleware:
             return False
         if header(headers, b"content-encoding") is not None:
             return False
-        if b"no-transform" in (header(headers, b"cache-control") or b"").lower():
+        if b"no-transform" in (header_list(headers, b"cache-control") or b"").lower():
             return False
         content_type = header(headers, b"content-type")
         if content_type is None or not _COMPRESSIBLE.match(content_type.strip()):
@@ -321,6 +342,12 @@ class _Response:
             # A 304 stands in for a 200 that varies by Accept-Encoding, and
             # RFC 9110 §15.4.5 makes it repeat that Vary. It has no body and
             # no Content-Type to judge eligibility by, so it always says so.
+            # A 304 to a request we would have encoded stands in for a weak-tagged
+            # 200, so it carries the same weak validator.
+            if self._codec is not None:
+                headers = [
+                    (k, _weak(v) if k.lower() == b"etag" else v) for k, v in headers
+                ]
             message["headers"] = _with_vary(headers)
             self._passthrough = True
             await self._send(message)
@@ -336,7 +363,7 @@ class _Response:
             return
         self._active = (self._codec, message)
         cache = self._owner.cache
-        cache_control = (header(headers, b"cache-control") or b"").lower()
+        cache_control = (header_list(headers, b"cache-control") or b"").lower()
         etag = header(headers, b"etag")
         # Only a response with a validator is cached: without one, two
         # different bodies of one resource (another Vary dimension, a redeploy
@@ -363,7 +390,10 @@ class _Response:
             self._buffered.append(body)
         if self._stream is None:
             if not more:
-                packed = codec.whole(body, codec.fast)
+                if len(body) > _OFFLOAD_BYTES:
+                    packed = await asyncio.to_thread(codec.whole, body, codec.fast)
+                else:
+                    packed = codec.whole(body, codec.fast)
                 if len(packed) >= len(body):
                     await self._send(start)
                     await self._send(
@@ -412,16 +442,20 @@ def _with_vary(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
     return headers
 
 
+def _weak(etag: bytes) -> bytes:
+    return etag if etag.startswith(b"W/") else b"W/" + etag
+
+
 def _encoded_start(
     start: HTTPResponseStartEvent, encoding: bytes, length: int | None
 ) -> HTTPResponseStartEvent:
     headers: list[tuple[bytes, bytes]] = []
     for key, value in start["headers"]:
         lowered = key.lower()
-        if lowered == b"content-length":
+        if lowered in (b"content-length", b"accept-ranges"):
             continue
-        if lowered == b"etag" and not value.startswith(b"W/"):
-            value = b"W/" + value
+        if lowered == b"etag":
+            value = _weak(value)
         headers.append((key, value))
     headers.append((b"content-encoding", encoding))
     if length is not None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import gzip
+import random
 import os
 import threading
 import time
@@ -115,17 +116,65 @@ def test_stream_is_compressed_per_chunk() -> None:
         assert gzip.decompress(body) == b"data: 0\n\ndata: 1\n\ndata: 2\n\n"
 
 
+_RNG = random.Random(7)
+_VOCABULARY = ["".join(_RNG.choices("abcdefghijklmnop", k=_RNG.randint(3, 9))) for _ in range(400)]
+WORDS = " ".join(_RNG.choices(_VOCABULARY, k=20000))
+
+
+@get("/tagged")
+async def get_tagged() -> Response[str]:
+    return Response(
+        WORDS,
+        media_type="text/javascript",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": '"tagged-1"',
+        },
+    )
+
+
 def test_immutable_asset_is_refined_into_cache() -> None:
-    with _client() as client:
-        first, a = _raw(client, "/asset", "zstd")
-        assert zstd.decompress(a) == b"x" * 8192
-        for _ in range(50):
-            second, b = _raw(client, "/asset", "zstd")
-            if int(second.headers["content-length"]) <= len(a) and b != a:
+    app = Litestar(route_handlers=[get_tagged], middleware=Transfer().middleware())
+    with TestClient(app) as client:
+        _, fast = _raw(client, "/tagged", "zstd")
+        for _ in range(100):
+            _, best = _raw(client, "/tagged", "zstd")
+            if len(best) < len(fast):
                 break
-        assert zstd.decompress(b) == b"x" * 8192
-        third, c = _raw(client, "/asset", "zstd")
-        assert c == b
+            time.sleep(0.02)
+        assert len(best) < len(fast)
+        assert zstd.decompress(best) == WORDS.encode()
+        _, again = _raw(client, "/tagged", "zstd")
+        assert again == best
+
+
+def test_split_accept_encoding_and_q_out_of_range() -> None:
+    assert negotiate(b"gzip;q=7, zstd;q=0.5", (b"zstd", b"gzip")) == b"gzip"
+    assert negotiate(b"zstd;q=nan, gzip;q=0.1", (b"zstd", b"gzip")) == b"gzip"
+    with _client() as client, client.stream(
+        "GET",
+        "/big",
+        headers=[("Accept-Encoding", "identity;q=0.1"), ("Accept-Encoding", "gzip")],
+    ) as resp:
+        assert resp.headers["content-encoding"] == "gzip"
+
+
+@get("/ranged")
+async def get_ranged() -> Response[str]:
+    return Response("y" * 8192, media_type="text/plain", headers={"Accept-Ranges": "bytes"})
+
+
+def test_encoded_response_drops_accept_ranges_and_304_is_weak() -> None:
+    app = Litestar(
+        route_handlers=[get_ranged, get_big], middleware=Transfer().middleware()
+    )
+    with TestClient(app) as client:
+        resp, _ = _raw(client, "/ranged", "zstd")
+        assert "accept-ranges" not in resp.headers
+        tag = client.get("/big", headers={"Accept-Encoding": "zstd"}).headers["etag"]
+        again = client.get("/big", headers={"Accept-Encoding": "zstd", "If-None-Match": tag})
+        assert again.status_code == 304
+        assert again.headers["etag"] == tag
 
 
 def test_raw_paths_and_disabled_layers() -> None:

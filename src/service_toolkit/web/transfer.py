@@ -6,6 +6,11 @@ fixed order so each sees what it needs: compression outside (it encodes the
 final bytes and has nothing to do on a ``304``), conditional requests inside
 (the validator is hashed from the raw representation, so one ``ETag`` covers
 every encoding).
+
+Install the ``compression`` extra (brotli) on any service behind Cloudflare:
+Cloudflare asks origins for ``br, gzip`` only, so without it the origin
+answers with gzip. zstd needs nothing (stdlib), but only clients that ask for
+it directly get it.
 """
 
 from __future__ import annotations
