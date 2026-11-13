@@ -52,8 +52,16 @@ def _rules(reactor: Reactor, kind: ProblemKind, store: ProblemStore) -> tuple[Ed
         if record is not None and record.holds is False:
             # A later exit is queued behind this enter; the pair nets to nothing.
             return
-        problem = await store.open(kind.kind, entity.kind, entity.id, kind.details(facts), _at(t.at), t.id)
-        if problem is not None:
+        at = _at(t.at)
+        problem = await store.open(kind.kind, entity.kind, entity.id, kind.details(facts), at, t.id)
+        if problem is None:
+            return
+        # After a restart the rule fires again for a problem the store still
+        # holds open; `open` re-attaches to that row and writes nothing new.
+        # Logging that as an open read as every deploy reopening every problem.
+        if problem.first_seen < at:
+            log.debug("problem_reattached kind=%s subject=%s problem=%s", kind.kind, str(entity), problem.id)
+        else:
             log.info("problem_open kind=%s subject=%s problem=%s transition=%s", kind.kind, str(entity), problem.id, t.id)
 
     async def exited(entity: EntityRef, facts: Facts, t: Transition) -> None:
