@@ -32,6 +32,10 @@ runtime = [
     "dep:tracing",
     "dep:tracing-subscriber",
 ]
+# HTTP client side of the Transfer layer: declared policy, zstd/br/gzip
+# decoding, retries with Retry-After, conditional GET over an ETag store.
+# Portable (no unix-only code), so desktop and mobile consumers can take it.
+http = ["dep:reqwest", "dep:bytes", "dep:httpdate", "dep:tokio", "tokio/time"]
 # Native `lp-ci` binary for Rust repos. No extra deps — the CI engine is pure
 # std — so this builds standalone with `--no-default-features --features cli`.
 cli = []
@@ -56,9 +60,18 @@ prometheus = { version = "0.13", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
+# `http` feature deps. reqwest matches control-agent and the launcher (0.12,
+# rustls, no default features).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "zstd"], optional = true }
+bytes = { version = "1", optional = true }
+httpdate = { version = "1", optional = true }
+
 # Native CI gate for Rust consumers. Gated behind `cli` so the default
 # (maturin/python) and grpc builds don't produce it.
 [[bin]]
 name = "lp-ci"
 path = "src/bin/lp_ci.rs"
 required-features = ["cli"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

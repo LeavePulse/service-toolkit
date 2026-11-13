@@ -32,6 +32,10 @@ mod text;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 
+/// HTTP client side of the Transfer layer (`http` feature).
+#[cfg(feature = "http")]
+pub mod http;
+
 // Runtime helpers for Rust services (node agent, poller): env-config parsing,
 // tracing init, a Prometheus `/metrics` server, a typed subprocess runner, and
 // wall-clock helpers. Pure-Rust, no Python dep; gated behind `runtime`.
