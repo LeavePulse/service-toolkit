@@ -44,7 +44,7 @@ from ..errors.awesome_errors import (
     build_standard_exception_handlers,
 )
 from .cors import resolve_cors_origins
-from .etag import etag_middleware
+from .transfer import Transfer
 from .health import HealthController, HealthState, sqlalchemy_check
 from ..observability.logging import (
     build_standard_logging_config,
@@ -144,12 +144,10 @@ def create_service_app(
     # Publish every handler with an explicit ``operation_id`` as an SDK
     # procedure, without ``@sdk_operation`` on each (see ``stamp_sdk_hints``).
     sdk_explicit_operations: bool = False,
-    # Conditional-request support: stamp an ETag on cacheable GET responses and
-    # answer a matching If-None-Match with 304. Disable for services with no
-    # cacheable GET. ``etag_exclude_patterns`` are path regexes skipped entirely
-    # (live endpoints: online status, telemetry, aggregates).
-    enable_etag: bool = True,
-    etag_exclude_patterns: Sequence[str] = (),
+    # How responses travel: content-negotiated compression (zstd/br/gzip,
+    # streams flushed per chunk, immutable assets cached pre-compressed) and
+    # conditional requests (ETag + 304). See ``Transfer`` for the knobs.
+    transfer: Transfer = Transfer(),
     # Readiness. A database config given above is checked automatically; add
     # anything else this service cannot serve without (NATS, an upstream gRPC
     # service) as name → async check returning None when healthy, or a short
@@ -222,12 +220,9 @@ def create_service_app(
     if otel_middleware is not None:
         middleware.append(DefineMiddleware(otel_middleware))
     middleware.append(DefineMiddleware(request_context_middleware))
-    # ETag sits high in the stack so it sees the fully-rendered response body
-    # (after handlers + serialization) yet inside tracing/context.
-    if enable_etag:
-        middleware.append(
-            DefineMiddleware(etag_middleware, exclude=tuple(etag_exclude_patterns))
-        )
+    # Transfer layers sit high in the stack so they see the fully-rendered
+    # response body (after handlers + serialization) yet inside tracing/context.
+    middleware.extend(transfer.middleware())
     middleware.append(DefineMiddleware(PrometheusMiddleware))
 
     if auth_integration is not None:

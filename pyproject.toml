@@ -53,6 +53,9 @@ tracing = [
     "opentelemetry-instrumentation-sqlalchemy>=0.49b0,<1.0.0",
     "opentelemetry-instrumentation-redis>=0.49b0,<1.0.0",
 ]
+compression = [
+    "brotli>=1.1.0,<2",
+]
 
 [project.scripts]
 lp-arch-lint = "service_toolkit.dev.arch_linter:main"
@@ -110,3 +113,7 @@ python_version = "3.14"
 
 [tool.ruff]
 extend-exclude = ["src/service_toolkit/grpc/generated"]
+
+[[tool.mypy.overrides]]
+module = ["brotli"]
+ignore_missing_imports = true

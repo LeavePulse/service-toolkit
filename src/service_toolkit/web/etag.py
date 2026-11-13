@@ -8,8 +8,8 @@ pays for the round-trip, not the payload re-transfer + re-parse.
 Scope: ``GET`` requests with a 2xx response and a body. A handler opts out by
 setting ``Cache-Control: no-store`` (live endpoints — online status, telemetry,
 aggregates — should do this; their data is never the same twice and must not be
-cached). Non-GET, non-2xx, empty-body and no-store responses pass through
-untouched.
+cached). Non-GET, non-2xx, empty-body, no-store and streamed (no ``Content-Length``)
+responses pass through untouched.
 
 The body is buffered to hash it; this is a deliberate trade for correctness on
 a BFF, where the response is already assembled in memory from upstream gRPC.
@@ -18,7 +18,7 @@ a BFF, where the response is already assembled in memory from upstream gRPC.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from hashlib import blake2b
 
 from litestar.types import (
@@ -29,6 +29,8 @@ from litestar.types import (
     Scope,
     Send,
 )
+
+from .asgi_headers import header
 
 
 #: The caching policy a tagged response carries when its handler names none.
@@ -79,14 +81,6 @@ _CARRIED_ON_304: frozenset[bytes] = frozenset(
 )
 
 
-def _header(headers: Iterable[tuple[bytes, bytes]], name: bytes) -> bytes | None:
-    lowered = name.lower()
-    for key, value in headers:
-        if key.lower() == lowered:
-            return value
-    return None
-
-
 def _compute_etag(body: bytes) -> str:
     # Strong ETag from the exact bytes the client would receive. blake2b is
     # faster than sha256 and 16 bytes of digest is ample for collision safety.
@@ -115,7 +109,7 @@ class ETagMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if_none_match = _header(scope["headers"], b"if-none-match")
+        if_none_match = header(scope["headers"], b"if-none-match")
 
         start_message: HTTPResponseStartEvent | None = None
         body_chunks: list[bytes] = []
@@ -131,13 +125,16 @@ class ETagMiddleware:
             if message["type"] == "http.response.start":
                 status = int(message["status"])
                 headers = list(message["headers"])
-                cache_control = _header(headers, b"cache-control") or b""
-                already_tagged = _header(headers, b"etag") is not None
-                # Only buffer-and-tag a cacheable 2xx; otherwise stream as-is.
+                cache_control = header(headers, b"cache-control") or b""
+                already_tagged = header(headers, b"etag") is not None
+                # Only buffer-and-tag a cacheable 2xx of known size; otherwise
+                # stream as-is. A body without Content-Length is a stream (SSE,
+                # NDJSON): buffering it to hash would hold an endless one forever.
                 if (
                     status < 200
                     or status >= 300
                     or already_tagged
+                    or header(headers, b"content-length") is None
                     or b"no-store" in cache_control.lower()
                 ):
                     passthrough = True
@@ -185,7 +182,7 @@ class ETagMiddleware:
         # `etag` alone, which is the "no policy at all" a heuristic cache acts on.
         # The second response is the one that reaches a cache MOST often.
         headers = list(start_message["headers"])
-        if _header(headers, b"cache-control") is None:
+        if header(headers, b"cache-control") is None:
             headers.append((b"cache-control", _DEFAULT_CACHE_CONTROL))
         start_message["headers"] = headers
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from litestar import Litestar, Response, get
 from litestar.middleware.base import DefineMiddleware
+from litestar.response import Stream
 from litestar.testing import TestClient
 
 from service_toolkit.web.etag import etag_middleware
@@ -169,3 +172,22 @@ def test_the_default_policy_reaches_the_304_as_well() -> None:
             full.headers.get("cache-control")
         )
         assert "no-cache" in not_modified.headers.get("cache-control", "")
+
+
+@get("/stream")
+async def get_stream() -> Stream:
+    async def gen() -> AsyncIterator[bytes]:
+        yield b"data: 1\n\n"
+
+    return Stream(gen(), media_type="text/event-stream")
+
+
+def test_stream_is_not_buffered_or_tagged() -> None:
+    app = Litestar(
+        route_handlers=[get_stream],
+        middleware=[DefineMiddleware(etag_middleware)],
+    )
+    with TestClient(app) as client:
+        resp = client.get("/stream")
+        assert "etag" not in resp.headers
+        assert resp.content == b"data: 1\n\n"
