@@ -9,9 +9,10 @@ describes data and never thinks about bytes on the wire:
 * Streams are compressed chunk by chunk and flushed at every chunk boundary, so
   SSE and NDJSON keep their latency: a client sees each event as soon as the
   handler sends it, it just costs fewer bytes.
-* Responses marked ``immutable`` (hashed static assets) are compressed once at
-  a high level and kept in a byte-bounded LRU; every later request pays a dict
-  lookup instead of a compression pass.
+* Responses marked ``immutable`` (hashed static assets) are served at the fast
+  level on a miss while the best level is computed off the event loop into a
+  byte-bounded LRU; every later request pays a dict lookup, and nobody waits
+  for the slow pass.
 * Bodies below ``min_size``, already-encoded bodies, ``no-transform`` and
   formats that are compressed by nature (images, video, archives, woff2) pass
   through untouched — compressing them only burns CPU.
@@ -25,6 +26,7 @@ so revalidation keeps working across encodings.
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import re
 import zlib
@@ -208,6 +210,7 @@ class CompressionMiddleware:
         self.app = app
         self._min_size = min_size
         self.cache = _Cache(immutable_cache_bytes) if immutable_cache_bytes else None
+        self._refining: dict[tuple[bytes, ...], asyncio.Task[None]] = {}
         self._exclude = [re.compile(pattern) for pattern in exclude]
         self._available = tuple(_CODECS)
 
@@ -230,6 +233,20 @@ class CompressionMiddleware:
             str(path).encode(),
         )
         await self.app(scope, receive, response.send)
+
+    def refine(
+        self, cache: _Cache, key: tuple[bytes, ...], codec: _Codec, raw: bytes
+    ) -> None:
+        if key in self._refining:
+            return
+
+        async def run() -> None:
+            try:
+                cache.put(key, await asyncio.to_thread(codec.whole, raw, codec.best))
+            finally:
+                self._refining.pop(key, None)
+
+        self._refining[key] = asyncio.get_running_loop().create_task(run())
 
     def eligible(self, status: int, headers: list[tuple[bytes, bytes]]) -> bool:
         if status < 200 or status in (204, 206, 304):
@@ -313,13 +330,9 @@ class _Response:
             return
         if self._cached is not None:
             self._buffered.append(body)
-            if more:
-                return
-            cache, key = self._cached
-            packed = codec.whole(b"".join(self._buffered), codec.best)
-            cache.put(key, packed)
-            await self._whole(codec, start, packed)
-            return
+            if not more:
+                cache, key = self._cached
+                self._owner.refine(cache, key, codec, b"".join(self._buffered))
         if self._stream is None:
             if not more:
                 packed = codec.whole(body, codec.fast)

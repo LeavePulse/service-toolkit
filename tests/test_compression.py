@@ -107,13 +107,17 @@ def test_stream_is_compressed_per_chunk() -> None:
         assert gzip.decompress(body) == b"data: 0\n\ndata: 1\n\ndata: 2\n\n"
 
 
-def test_immutable_asset_is_served_from_cache() -> None:
+def test_immutable_asset_is_refined_into_cache() -> None:
     with _client() as client:
         first, a = _raw(client, "/asset", "zstd")
-        second, b = _raw(client, "/asset", "zstd")
-        assert a == b
-        assert int(second.headers["content-length"]) == len(b)
+        assert zstd.decompress(a) == b"x" * 8192
+        for _ in range(50):
+            second, b = _raw(client, "/asset", "zstd")
+            if int(second.headers["content-length"]) <= len(a) and b != a:
+                break
         assert zstd.decompress(b) == b"x" * 8192
+        third, c = _raw(client, "/asset", "zstd")
+        assert c == b
 
 
 def test_raw_paths_and_disabled_layers() -> None:
