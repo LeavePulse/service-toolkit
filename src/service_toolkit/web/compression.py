@@ -9,7 +9,8 @@ describes data and never thinks about bytes on the wire:
 * Streams are compressed chunk by chunk and flushed at every chunk boundary, so
   SSE and NDJSON keep their latency: a client sees each event as soon as the
   handler sends it, it just costs fewer bytes.
-* Responses marked ``immutable`` (hashed static assets) are served at the fast
+* Responses marked ``immutable`` that carry an ``ETag`` (hashed static assets;
+  the inner ETag layer tags every buffered body) are served at the fast
   level on a miss while the best level is computed off the event loop into a
   byte-bounded LRU; every later request pays a dict lookup, and nobody waits
   for the slow pass.
@@ -177,8 +178,16 @@ class _Cache:
             self.entries.move_to_end(key)
         return value
 
+    def admits(self, size: int) -> bool:
+        """Whether an entry of ``size`` bytes may be held at all.
+
+        One entry never takes more than a quarter of the budget, so a single
+        large asset cannot flush everything else out.
+        """
+        return size <= self.budget // 4
+
     def put(self, key: tuple[bytes, ...], value: bytes) -> None:
-        if len(value) > self.budget // 4:
+        if not self.admits(len(value)):
             return
         old = self.entries.pop(key, None)
         if old is not None:
@@ -211,6 +220,11 @@ class CompressionMiddleware:
         self._min_size = min_size
         self.cache = _Cache(immutable_cache_bytes) if immutable_cache_bytes else None
         self._refining: dict[tuple[bytes, ...], asyncio.Task[None]] = {}
+        # One best-level pass at a time: a cold start with many assets would
+        # otherwise fill the loop's default executor with multi-second brotli
+        # q11 jobs, and everything else queued there (getaddrinfo among them)
+        # waits behind them.
+        self._refine_slot = asyncio.Semaphore(1)
         self._exclude = [re.compile(pattern) for pattern in exclude]
         self._available = tuple(_CODECS)
 
@@ -230,7 +244,9 @@ class CompressionMiddleware:
             send,
             _CODECS[encoding] if encoding else None,
             self,
-            str(path).encode(),
+            # The query string is part of the resource: ``/app.js?v=1`` and
+            # ``/app.js?v=2`` are two bodies and must never share a cache entry.
+            str(path).encode() + b"?" + scope.get("query_string", b""),
         )
         await self.app(scope, receive, response.send)
 
@@ -242,7 +258,9 @@ class CompressionMiddleware:
 
         async def run() -> None:
             try:
-                cache.put(key, await asyncio.to_thread(codec.whole, raw, codec.best))
+                async with self._refine_slot:
+                    packed = await asyncio.to_thread(codec.whole, raw, codec.best)
+                cache.put(key, packed)
             finally:
                 self._refining.pop(key, None)
 
@@ -282,6 +300,7 @@ class _Response:
         self._hit: bytes | None = None
         self._buffered: list[bytes] = []
         self._stream: _Stream | None = None
+        self._emitted = 0
 
     async def send(self, message: Message) -> None:
         if self._passthrough:
@@ -298,6 +317,14 @@ class _Response:
 
     async def _start(self, message: HTTPResponseStartEvent) -> None:
         headers = list(message["headers"])
+        if int(message["status"]) == 304:
+            # A 304 stands in for a 200 that varies by Accept-Encoding, and
+            # RFC 9110 §15.4.5 makes it repeat that Vary. It has no body and
+            # no Content-Type to judge eligibility by, so it always says so.
+            message["headers"] = _with_vary(headers)
+            self._passthrough = True
+            await self._send(message)
+            return
         if not self._owner.eligible(int(message["status"]), headers):
             self._passthrough = True
             await self._send(message)
@@ -310,12 +337,16 @@ class _Response:
         self._active = (self._codec, message)
         cache = self._owner.cache
         cache_control = (header(headers, b"cache-control") or b"").lower()
-        if cache is not None and b"immutable" in cache_control:
+        etag = header(headers, b"etag")
+        # Only a response with a validator is cached: without one, two
+        # different bodies of one resource (another Vary dimension, a redeploy
+        # that kept the URL, the same length) would share an entry and the
+        # second would be served the first's bytes.
+        if cache is not None and etag is not None and b"immutable" in cache_control:
             key = (
                 self._codec.name,
                 self._path,
-                header(headers, b"etag") or b"",
-                header(headers, b"last-modified") or b"",
+                etag,
                 header(headers, b"content-length") or b"",
             )
             self._cached = (cache, key)
@@ -330,9 +361,6 @@ class _Response:
             return
         if self._cached is not None:
             self._buffered.append(body)
-            if not more:
-                cache, key = self._cached
-                self._owner.refine(cache, key, codec, b"".join(self._buffered))
         if self._stream is None:
             if not more:
                 packed = codec.whole(body, codec.fast)
@@ -343,16 +371,28 @@ class _Response:
                     )
                     return
                 await self._whole(codec, start, packed)
+                self._refine(codec, len(packed))
                 return
             self._stream = codec.stream(codec.fast)
             await self._send(_encoded_start(start, codec.name, None))
-        await self._send(
-            {
-                "type": "http.response.body",
-                "body": self._stream.chunk(body, last=not more),
-                "more_body": more,
-            }
-        )
+        out = self._stream.chunk(body, last=not more)
+        self._emitted += len(out)
+        await self._send({"type": "http.response.body", "body": out, "more_body": more})
+        if not more:
+            self._refine(codec, self._emitted)
+
+    def _refine(self, codec: _Codec, fast_size: int) -> None:
+        """Schedule the best-level pass for a missed immutable response.
+
+        Skipped when the fast result already exceeds what the cache admits:
+        the best level would be refused too, and since nothing is stored the
+        next request would schedule the same multi-second pass again.
+        """
+        if self._cached is None:
+            return
+        cache, key = self._cached
+        if cache.admits(fast_size):
+            self._owner.refine(cache, key, codec, b"".join(self._buffered))
 
     async def _whole(
         self, codec: _Codec, start: HTTPResponseStartEvent, packed: bytes
