@@ -23,12 +23,14 @@ public profile client helpers, and platform RBAC maps, use the provider-owned
 provider-owned `server-service-sdk` package.
 
 > **Note**
-> Install extras as needed:
-> - `pip install service-toolkit[nats]` for NATS helpers
-> - `pip install service-toolkit[redis]` for Redis helpers
-> - `pip install service-toolkit[grpc]` for gRPC runtime helpers
-> - `pip install service-toolkit[grpc-codegen]` for `lp-generate-grpc` and `lp-gen-client`
-> - `pip install service-toolkit[tracing]` for OpenTelemetry helpers
+> Install extras as needed (see "Installation" below for the git URL):
+> - `nats` for NATS helpers
+> - `redis` for Redis helpers
+> - `grpc` for gRPC runtime helpers
+> - `grpc-codegen` for `lp-generate-grpc` and `lp-gen-client`
+> - `tracing` for OpenTelemetry helpers
+> - `sqlalchemy`, `env`, `errors`, `geo`, `compression` and `rust` for the
+>   matching optional integrations
 
 ## Usage
 
@@ -193,8 +195,8 @@ dns_cache = LookupCache[str, list[str]](
 )
 ```
 
-`NATSSettings.from_env()` automatically uses [`env-settings`](https://github.com/THEROER/env-settings)
-when available, yet remains compatible with plain environment variables or manual
+`NATSSettings.from_env()` automatically uses [`msgspec-conf`](https://github.com/THEROER/msgspec-conf)
+(formerly `env-settings`) when available, yet remains compatible with plain environment variables or manual
 parameter construction.
 
 ```python
@@ -225,19 +227,19 @@ async def load(server_id: int) -> dict[str, object]:
         )
 ```
 
-Install directly from the mono-repo path:
+## Installation
+
+Services depend on the toolkit as a git dependency managed with uv:
 
 ```bash
-poetry add "git+https://github.com/THEROER/service-toolkit"
+uv add "service-toolkit @ git+https://github.com/LeavePulse/service-toolkit.git"
 ```
 
 Install with extras when needed:
 
 ```bash
-poetry add "git+https://github.com/THEROER/service-toolkit[nats]"
-poetry add "git+https://github.com/THEROER/service-toolkit[redis]"
-poetry add "git+https://github.com/THEROER/service-toolkit[grpc]"
-poetry add "git+https://github.com/THEROER/service-toolkit[grpc-codegen]"
+uv add "service-toolkit[nats,grpc,tracing] @ git+https://github.com/LeavePulse/service-toolkit.git"
+uv add --dev "service-toolkit[grpc-codegen] @ git+https://github.com/LeavePulse/service-toolkit.git"
 ```
 
 Run tests with:
